@@ -1,15 +1,17 @@
 import { McpServer } from '@modelcontextprotocol/server';
 import * as z from 'zod/v4';
+import { API_CATALOG } from './api-catalog.js';
 import { getSharedClient } from './also-client.js';
 import { MARKETPLACES } from './marketplaces.js';
+import { registerAlsoPostTool, textResult, tryParseJson } from './tools-helpers.js';
 
-function textResult(data: unknown, isError = false) {
-  const text = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
-  return {
-    content: [{ type: 'text' as const, text }],
-    isError,
-  };
-}
+const accountId = z.number().int().describe('ALSO Cloud Account ID');
+const parentAccountId = z.number().int().describe('Parent Account ID');
+const resellerContext = z
+  .number()
+  .int()
+  .optional()
+  .describe('Optional reseller context Account ID (omit if unused)');
 
 export function createServer(): McpServer {
   const server = new McpServer({
@@ -17,29 +19,56 @@ export function createServer(): McpServer {
     version: '0.1.0',
   });
 
+  // --- Meta / session ---
+
   server.registerTool(
     'list_marketplaces',
     {
-      title: 'List marketplaces',
+      title: 'List country marketplace URLs',
       description:
-        'List known ALSO Cloud Marketplace country keys and base URLs. No credentials required.',
+        'Static country keys → marketplace base URLs (Switzerland, Germany, Debug, …). No credentials required. For API-owned marketplaces use get_owned_marketplaces.',
       inputSchema: z.object({}),
     },
     async () => textResult(MARKETPLACES),
   );
 
   server.registerTool(
+    'list_api_endpoints',
+    {
+      title: 'List Simple API endpoints',
+      description:
+        'Catalog of MarketplaceSimpleAPI 1.0.0 endpoints with tags, summaries, dedicated MCP tool names (if any), and write/destructive risk flags.',
+      inputSchema: z.object({
+        tag: z.string().optional().describe('Filter by tag, e.g. Company, Subscription'),
+        onlyReadable: z
+          .boolean()
+          .optional()
+          .describe('If true, exclude write/destructive endpoints'),
+      }),
+    },
+    async ({ tag, onlyReadable }) => {
+      let items = API_CATALOG;
+      if (tag) {
+        const t = tag.toLowerCase();
+        items = items.filter((i) => i.tag.toLowerCase().includes(t));
+      }
+      if (onlyReadable) {
+        items = items.filter((i) => !i.risk);
+      }
+      return textResult(items);
+    },
+  );
+
+  server.registerTool(
     'validate_session',
     {
       title: 'Validate session',
-      description:
-        'Login if needed and ping the ALSO Cloud API (PingPong) to check whether the session is active.',
+      description: 'Login if needed and call PingPong to check the session.',
       inputSchema: z.object({}),
     },
     async () => {
       try {
-        const client = getSharedClient();
-        const ok = await client.validateSession();
+        const ok = await getSharedClient().validateSession();
         return textResult({ valid: ok });
       } catch (err) {
         return textResult(err instanceof Error ? err.message : String(err), true);
@@ -48,62 +77,279 @@ export function createServer(): McpServer {
   );
 
   server.registerTool(
-    'get_company',
+    'clear_session',
     {
-      title: 'Get company',
-      description:
-        'Call the GetCompany endpoint. Pass parentAccountId (and optional filters) as used by the Simple API.',
-      inputSchema: z.object({
-        parentAccountId: z
-          .number()
-          .int()
-          .describe('Parent account ID on the ALSO Cloud marketplace'),
-        extra: z
-          .record(z.string(), z.unknown())
-          .optional()
-          .describe('Additional JSON fields to merge into the request body'),
-      }),
+      title: 'Clear session',
+      description: 'Drop the cached session token (forces fresh login on next call).',
+      inputSchema: z.object({}),
     },
-    async ({ parentAccountId, extra }) => {
+    async () => {
       try {
-        const client = getSharedClient();
-        const result = await client.request({
-          method: 'POST',
-          endpoint: 'GetCompany',
-          body: { parentAccountId, ...(extra ?? {}) },
-        });
-        return textResult({
-          status: result.status,
-          body: tryParseJson(result.body),
-        });
+        getSharedClient().clearSession();
+        return textResult({ cleared: true });
       } catch (err) {
         return textResult(err instanceof Error ? err.message : String(err), true);
       }
     },
   );
 
+  // --- Company / Reseller / Department / User ---
+
+  registerAlsoPostTool(server, 'get_company', {
+    title: 'Get company',
+    description: 'GetCompany — company by accountId.',
+    endpoint: 'GetCompany',
+    inputSchema: z.object({ accountId }),
+  });
+
+  registerAlsoPostTool(server, 'get_companies', {
+    title: 'Get companies',
+    description: 'GetCompanies — first-level companies under parentAccountId.',
+    endpoint: 'GetCompanies',
+    inputSchema: z.object({ parentAccountId }),
+  });
+
+  registerAlsoPostTool(server, 'get_company_by_vat_id', {
+    title: 'Get company by VAT ID',
+    description: 'GetCompanyByVatId.',
+    endpoint: 'GetCompanyByVatId',
+    inputSchema: z.object({
+      vatId: z.string().min(1).describe('VAT / UID number'),
+    }),
+  });
+
+  registerAlsoPostTool(server, 'get_reseller', {
+    title: 'Get reseller',
+    description: 'GetReseller — reseller by accountId.',
+    endpoint: 'GetReseller',
+    inputSchema: z.object({ accountId }),
+  });
+
+  registerAlsoPostTool(server, 'get_resellers', {
+    title: 'Get resellers',
+    description: 'GetResellers — resellers under parentAccountId.',
+    endpoint: 'GetResellers',
+    inputSchema: z.object({ parentAccountId }),
+  });
+
+  registerAlsoPostTool(server, 'get_reseller_by_vat_id', {
+    title: 'Get reseller by VAT ID',
+    description: 'GetResellerByVatId.',
+    endpoint: 'GetResellerByVatId',
+    inputSchema: z.object({
+      vatId: z.string().min(1).describe('VAT / UID number'),
+    }),
+  });
+
+  registerAlsoPostTool(server, 'get_department', {
+    title: 'Get department',
+    description: 'GetDepartment — department by accountId.',
+    endpoint: 'GetDepartment',
+    inputSchema: z.object({ accountId }),
+  });
+
+  registerAlsoPostTool(server, 'get_departments', {
+    title: 'Get departments',
+    description: 'GetDepartments — departments under parentAccountId.',
+    endpoint: 'GetDepartments',
+    inputSchema: z.object({ parentAccountId }),
+  });
+
+  registerAlsoPostTool(server, 'get_user', {
+    title: 'Get user',
+    description: 'GetUser — user by accountId.',
+    endpoint: 'GetUser',
+    inputSchema: z.object({ accountId }),
+  });
+
+  registerAlsoPostTool(server, 'get_users', {
+    title: 'Get users',
+    description: 'GetUsers — users under companyAccountId.',
+    endpoint: 'GetUsers',
+    inputSchema: z.object({
+      companyAccountId: z.number().int().describe('Company Account ID'),
+    }),
+  });
+
+  // --- Subscriptions ---
+
+  registerAlsoPostTool(server, 'get_subscription', {
+    title: 'Get subscription',
+    description: 'GetSubscription — subscription by accountId.',
+    endpoint: 'GetSubscription',
+    inputSchema: z.object({ accountId, resellerContext }),
+  });
+
+  registerAlsoPostTool(server, 'get_subscriptions', {
+    title: 'Get subscriptions',
+    description: 'GetSubscriptions — subscriptions under parentAccountId.',
+    endpoint: 'GetSubscriptions',
+    inputSchema: z.object({
+      parentAccountId,
+      resellerContext,
+      excludeUserLevel: z
+        .boolean()
+        .optional()
+        .describe('If true, exclude user-level subscriptions'),
+    }),
+  });
+
+  registerAlsoPostTool(server, 'get_subscription_with_addons', {
+    title: 'Get subscription with addons',
+    description: 'GetSubscriptionWithAddons.',
+    endpoint: 'GetSubscriptionWithAddons',
+    inputSchema: z.object({ accountId, resellerContext }),
+  });
+
+  registerAlsoPostTool(server, 'get_possible_services_for_parent', {
+    title: 'Get possible services for parent',
+    description: 'GetPossibleServicesForParent — services a parent can subscribe to.',
+    endpoint: 'GetPossibleServicesForParent',
+    inputSchema: z.object({ parentAccountId }),
+  });
+
+  // --- Invoices / reports ---
+
+  registerAlsoPostTool(server, 'get_reports', {
+    title: 'Get reports',
+    description: 'GetReports — available reports for the authenticated user.',
+    endpoint: 'GetReports',
+    inputSchema: z.object({}),
+  });
+
+  registerAlsoPostTool(server, 'execute_report', {
+    title: 'Execute report',
+    description: 'ExecuteReport — run a named report with parameters.',
+    endpoint: 'ExecuteReport',
+    inputSchema: z.object({
+      reportName: z.string().min(1),
+      parameters: z.record(z.string(), z.unknown()).default({}),
+      columns: z.record(z.string(), z.unknown()).optional(),
+    }),
+  });
+
+  registerAlsoPostTool(server, 'get_latest_invoices', {
+    title: 'Get latest invoices',
+    description: 'GetLatestInvoices for the authenticated account.',
+    endpoint: 'GetLatestInvoices',
+    inputSchema: z.object({
+      resellerContext,
+      groupByDepartments: z.boolean().optional(),
+    }),
+  });
+
+  registerAlsoPostTool(server, 'get_latest_invoices_for_period', {
+    title: 'Get invoices for period',
+    description: 'GetLatestInvoicesForPeriod — invoices for year/month.',
+    endpoint: 'GetLatestInvoicesForPeriod',
+    inputSchema: z.object({
+      year: z.number().int(),
+      month: z.number().int().min(1).max(12),
+      resellerContext,
+      groupByDepartments: z.boolean().optional(),
+    }),
+  });
+
+  registerAlsoPostTool(server, 'get_preview_invoices', {
+    title: 'Get preview invoices',
+    description: 'GetPreviewInvoices — current open billing month preview.',
+    endpoint: 'GetPreviewInvoices',
+    inputSchema: z.object({
+      resellerContext,
+      groupByDepartments: z.boolean().optional(),
+    }),
+  });
+
+  registerAlsoPostTool(server, 'get_invoice_aggregation_report', {
+    title: 'Get invoice aggregation report',
+    description: 'GetInvoiceAggregationReport for year/month.',
+    endpoint: 'GetInvoiceAggregationReport',
+    inputSchema: z.object({
+      year: z.number().int().optional(),
+      month: z.number().int().min(1).max(12).optional(),
+      resellerContext,
+    }),
+  });
+
+  // --- Marketplace / catalog ---
+
+  registerAlsoPostTool(server, 'get_owned_marketplaces', {
+    title: 'Get owned marketplaces',
+    description: 'GetMarketplaces — marketplaces owned by the company (API).',
+    endpoint: 'GetMarketplaces',
+    inputSchema: z.object({}),
+  });
+
+  registerAlsoPostTool(server, 'list_marketplace_services', {
+    title: 'List marketplace services',
+    description: 'ListMarketplaceServices for marketplaceId.',
+    endpoint: 'ListMarketplaceServices',
+    inputSchema: z.object({
+      marketplaceId: z.number().int(),
+    }),
+  });
+
+  registerAlsoPostTool(server, 'get_available_services_for_marketplace', {
+    title: 'Get available marketplace services',
+    description: 'GetAvailableServicesForMarketplace.',
+    endpoint: 'GetAvailableServicesForMarketplace',
+    inputSchema: z.object({
+      marketplaceId: z.number().int(),
+      filters: z.array(z.unknown()).optional(),
+    }),
+  });
+
+  registerAlsoPostTool(server, 'get_service_information', {
+    title: 'Get service information',
+    description: 'GetServiceInformation by serviceName.',
+    endpoint: 'GetServiceInformation',
+    inputSchema: z.object({
+      serviceName: z.string().min(1),
+    }),
+  });
+
+  // --- Credit / security / special deal ---
+
+  registerAlsoPostTool(server, 'get_credit_limit', {
+    title: 'Get credit limit',
+    description: 'GetCreditLimit for company accountId.',
+    endpoint: 'GetCreditLimit',
+    inputSchema: z.object({ accountId }),
+  });
+
+  registerAlsoPostTool(server, 'get_security_roles', {
+    title: 'Get security roles',
+    description: 'GetSecurityRoles for company/reseller accountId.',
+    endpoint: 'GetSecurityRoles',
+    inputSchema: z.object({ accountId: accountId.optional() }),
+  });
+
+  registerAlsoPostTool(server, 'get_special_deal', {
+    title: 'Get special deal',
+    description: 'GetSpecialDeal discounts for accountId.',
+    endpoint: 'GetSpecialDeal',
+    inputSchema: z.object({ accountId }),
+  });
+
+  // --- Escape hatch ---
+
   server.registerTool(
     'api_request',
     {
       title: 'API request',
       description:
-        'Generic authenticated request against the ALSO Cloud Simple API (e.g. GetUser, GetSubscriptions). Prefer dedicated tools when available.',
+        'Generic authenticated Simple API call. Use for write/destructive endpoints (Create*, Update*, TerminateAccount, …) or anything without a dedicated tool. Prefer list_api_endpoints to discover names. ALSO Simple API is POST-only for almost all operations.',
       inputSchema: z.object({
         method: z
           .enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE'])
-          .describe('HTTP method'),
+          .default('POST')
+          .describe('HTTP method (almost always POST for ALSO Simple API)'),
         endpoint: z
           .string()
           .min(1)
-          .describe('API endpoint name, e.g. GetCompany or GetUser'),
-        body: z
-          .unknown()
-          .optional()
-          .describe('JSON body for POST/PUT/PATCH/DELETE (object or array)'),
-        query: z
-          .record(z.string(), z.string())
-          .optional()
-          .describe('Optional query string parameters (mainly for GET)'),
+          .describe('Endpoint name, e.g. CreateCompany or TerminateAccount'),
+        body: z.unknown().optional().describe('JSON request body'),
+        query: z.record(z.string(), z.string()).optional(),
       }),
     },
     async ({ method, endpoint, body, query }) => {
@@ -125,31 +371,5 @@ export function createServer(): McpServer {
     },
   );
 
-  server.registerTool(
-    'clear_session',
-    {
-      title: 'Clear session',
-      description:
-        'Drop the cached session token so the next API call performs a fresh login.',
-      inputSchema: z.object({}),
-    },
-    async () => {
-      try {
-        getSharedClient().clearSession();
-        return textResult({ cleared: true });
-      } catch (err) {
-        return textResult(err instanceof Error ? err.message : String(err), true);
-      }
-    },
-  );
-
   return server;
-}
-
-function tryParseJson(raw: string): unknown {
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return raw;
-  }
 }
