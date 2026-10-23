@@ -31,6 +31,14 @@ export async function alsoPost(endpoint: string, body: unknown = {}) {
   };
 }
 
+export type AlsoToolAnnotations = {
+  title?: string;
+  readOnlyHint?: boolean;
+  destructiveHint?: boolean;
+  idempotentHint?: boolean;
+  openWorldHint?: boolean;
+};
+
 /** Register a typed POST wrapper around an ALSO Simple API endpoint. */
 export function registerAlsoPostTool<T extends z.ZodRawShape>(
   server: McpServer,
@@ -41,6 +49,7 @@ export function registerAlsoPostTool<T extends z.ZodRawShape>(
     endpoint: string;
     inputSchema: z.ZodObject<T>;
     mapBody?: (args: z.infer<z.ZodObject<T>>) => unknown;
+    annotations?: AlsoToolAnnotations;
   },
 ) {
   server.registerTool(
@@ -49,6 +58,7 @@ export function registerAlsoPostTool<T extends z.ZodRawShape>(
       title: config.title,
       description: config.description,
       inputSchema: config.inputSchema,
+      annotations: config.annotations,
     },
     async (args) => {
       try {
@@ -62,6 +72,11 @@ export function registerAlsoPostTool<T extends z.ZodRawShape>(
     },
   );
 }
+
+/** Flexible JSON object field for nested ALSO API payloads. */
+export const jsonObject = z
+  .record(z.string(), z.unknown())
+  .describe('JSON object as required by the ALSO Simple API');
 
 function stripUndefined(obj: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};

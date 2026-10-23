@@ -4,6 +4,7 @@ import { API_CATALOG } from './api-catalog.js';
 import { getSharedClient } from './also-client.js';
 import { MARKETPLACES } from './marketplaces.js';
 import { registerAlsoPostTool, textResult, tryParseJson } from './tools-helpers.js';
+import { registerWriteTools } from './write-tools.js';
 
 const accountId = z.number().int().describe('ALSO Cloud Account ID');
 const parentAccountId = z.number().int().describe('Parent Account ID');
@@ -331,6 +332,9 @@ export function createServer(): McpServer {
     inputSchema: z.object({ accountId }),
   });
 
+  // --- Targeted writes (Create/Update, subscription, credit, upgrade/renew) ---
+  registerWriteTools(server);
+
   // --- Escape hatch ---
 
   server.registerTool(
@@ -338,7 +342,7 @@ export function createServer(): McpServer {
     {
       title: 'API request',
       description:
-        'Generic authenticated Simple API call. Use for write/destructive endpoints (Create*, Update*, TerminateAccount, …) or anything without a dedicated tool. Prefer list_api_endpoints to discover names. ALSO Simple API is POST-only for almost all operations.',
+        'Generic authenticated Simple API call. Prefer dedicated tools when available. Use this for destructive ops (TerminateAccount, DeleteMarketplace*, DeleteSpecialDeal) and rare endpoints. ALSO Simple API is POST-only for almost all operations.',
       inputSchema: z.object({
         method: z
           .enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE'])
