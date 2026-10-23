@@ -1,0 +1,52 @@
+{
+  "name": "also-cloud-marketplace-mcp",
+  "version": "0.1.0",
+  "description": "MCP server for ALSO Cloud Marketplace API",
+  "type": "module",
+  "license": "MIT",
+  "author": "Pedrett IT+Web AG",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pitwch/also-cloud-marketplace-mcp.git"
+  },
+  "homepage": "https://github.com/pitwch/also-cloud-marketplace-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/pitwch/also-cloud-marketplace-mcp/issues"
+  },
+  "keywords": [
+    "mcp",
+    "also",
+    "also-cloud",
+    "marketplace",
+    "modelcontextprotocol"
+  ],
+  "bin": {
+    "also-cloud-marketplace-mcp": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/server": "^2.3.1",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3"
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true
+  }
+}
