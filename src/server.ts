@@ -2,8 +2,14 @@ import { McpServer } from '@modelcontextprotocol/server';
 import * as z from 'zod/v4';
 import { API_CATALOG } from './api-catalog.js';
 import { getSharedClient } from './also-client.js';
+import { SERVER_INSTRUCTIONS } from './instructions.js';
 import { MARKETPLACES } from './marketplaces.js';
-import { registerAlsoPostTool, textResult, tryParseJson } from './tools-helpers.js';
+import {
+  summarizeSubscription,
+  summarizeSubscriptions,
+} from './summarize.js';
+import { alsoPost, registerAlsoPostTool, textResult, tryParseJson } from './tools-helpers.js';
+import { registerWorkflowTools } from './workflow-tools.js';
 import { registerWriteTools } from './write-tools.js';
 
 const accountId = z.number().int().describe('ALSO Cloud Account ID');
@@ -13,12 +19,22 @@ const resellerContext = z
   .int()
   .optional()
   .describe('Optional reseller context Account ID (omit if unused)');
+const compactFlag = z
+  .boolean()
+  .optional()
+  .default(true)
+  .describe(
+    'If true (default), return a compact summary without huge Fields/PriceableItems arrays. Set false for full API payload.',
+  );
 
 export function createServer(): McpServer {
-  const server = new McpServer({
-    name: 'also-cloud-marketplace',
-    version: '0.1.0',
-  });
+  const server = new McpServer(
+    {
+      name: 'also-cloud-marketplace',
+      version: '0.1.0',
+    },
+    { instructions: SERVER_INSTRUCTIONS },
+  );
 
   // --- Meta / session ---
 
@@ -64,7 +80,8 @@ export function createServer(): McpServer {
     'validate_session',
     {
       title: 'Validate session',
-      description: 'Login if needed and call PingPong to check the session.',
+      description:
+        'Optional health check (PingPong). Login is automatic on other tools — do not call this before every query.',
       inputSchema: z.object({}),
     },
     async () => {
@@ -76,6 +93,9 @@ export function createServer(): McpServer {
       }
     },
   );
+
+  // High-level workflows first in registration order for discovery
+  registerWorkflowTools(server);
 
   server.registerTool(
     'clear_session',
@@ -105,7 +125,8 @@ export function createServer(): McpServer {
 
   registerAlsoPostTool(server, 'get_companies', {
     title: 'Get companies',
-    description: 'GetCompanies — first-level companies under parentAccountId.',
+    description:
+      'GetCompanies — all first-level companies under parentAccountId. To search by name prefer find_companies.',
     endpoint: 'GetCompanies',
     inputSchema: z.object({ parentAccountId }),
   });
@@ -174,30 +195,76 @@ export function createServer(): McpServer {
 
   // --- Subscriptions ---
 
-  registerAlsoPostTool(server, 'get_subscription', {
-    title: 'Get subscription',
-    description: 'GetSubscription — subscription by accountId.',
-    endpoint: 'GetSubscription',
-    inputSchema: z.object({ accountId, resellerContext }),
-  });
+  server.registerTool(
+    'get_subscription',
+    {
+      title: 'Get subscription',
+      description:
+        'GetSubscription by accountId. Prefer list_company_subscriptions for company-wide lists. compact=true by default.',
+      inputSchema: z.object({ accountId, resellerContext, compact: compactFlag }),
+    },
+    async ({ accountId: id, resellerContext: rc, compact = true }) => {
+      try {
+        const body: Record<string, unknown> = { accountId: id };
+        if (rc !== undefined) body.resellerContext = rc;
+        const res = await alsoPost('GetSubscription', body);
+        return textResult({
+          status: res.status,
+          body: compact ? summarizeSubscription(res.body) : res.body,
+        });
+      } catch (err) {
+        return textResult(err instanceof Error ? err.message : String(err), true);
+      }
+    },
+  );
 
-  registerAlsoPostTool(server, 'get_subscriptions', {
-    title: 'Get subscriptions',
-    description: 'GetSubscriptions — subscriptions under parentAccountId.',
-    endpoint: 'GetSubscriptions',
-    inputSchema: z.object({
-      parentAccountId,
-      resellerContext,
-      excludeUserLevel: z
-        .boolean()
-        .optional()
-        .describe('If true, exclude user-level subscriptions'),
-    }),
-  });
+  server.registerTool(
+    'get_subscriptions',
+    {
+      title: 'Get subscriptions',
+      description:
+        'GetSubscriptions under parentAccountId. For "subscriptions of company X by name" prefer list_company_subscriptions. compact=true by default (drops huge Fields arrays).',
+      inputSchema: z.object({
+        parentAccountId,
+        resellerContext,
+        excludeUserLevel: z
+          .boolean()
+          .optional()
+          .describe('If true, exclude user-level subscriptions'),
+        compact: compactFlag,
+        activeOnly: z
+          .boolean()
+          .optional()
+          .describe('When compact=true, only include Active subscriptions'),
+      }),
+    },
+    async ({
+      parentAccountId: parent,
+      resellerContext: rc,
+      excludeUserLevel,
+      compact = true,
+      activeOnly,
+    }) => {
+      try {
+        const body: Record<string, unknown> = { parentAccountId: parent };
+        if (rc !== undefined) body.resellerContext = rc;
+        if (excludeUserLevel !== undefined) body.excludeUserLevel = excludeUserLevel;
+        const res = await alsoPost('GetSubscriptions', body);
+        return textResult({
+          status: res.status,
+          body: compact
+            ? summarizeSubscriptions(res.body, Boolean(activeOnly))
+            : res.body,
+        });
+      } catch (err) {
+        return textResult(err instanceof Error ? err.message : String(err), true);
+      }
+    },
+  );
 
   registerAlsoPostTool(server, 'get_subscription_with_addons', {
     title: 'Get subscription with addons',
-    description: 'GetSubscriptionWithAddons.',
+    description: 'GetSubscriptionWithAddons — full detail for one subscription including addons.',
     endpoint: 'GetSubscriptionWithAddons',
     inputSchema: z.object({ accountId, resellerContext }),
   });
@@ -213,7 +280,8 @@ export function createServer(): McpServer {
 
   registerAlsoPostTool(server, 'get_reports', {
     title: 'Get reports',
-    description: 'GetReports — available reports for the authenticated user.',
+    description:
+      'GetReports — list available report names. Do NOT use this to find companies or subscriptions; use find_companies / list_company_subscriptions.',
     endpoint: 'GetReports',
     inputSchema: z.object({}),
   });

@@ -29,6 +29,7 @@ Benötigte Umgebungsvariablen:
 | `ALSO_CLOUDPW` | `••••••••` | ja |
 | `ALSO_CLOUD_TIMEOUT_MS` | `30000` | nein |
 | `ALSO_CLOUD_API_PREFIX` | `/SimpleAPI/.../rest` | nein |
+| `ALSO_CLOUD_PARENT_ACCOUNT_ID` | `315818` | nein (Default-Parent für Namenssuche) |
 
 `ALSO_CLOUD_MARKETPLACE` akzeptiert eine **volle URL** oder einen **Country-Key**:  
 `Switzerland`, `Germany`, `Austria`, `Debug`, …
@@ -226,21 +227,27 @@ npx -y @srbhptl39/mcp-superassistant-proxy@latest --config ./config.json --outpu
 
 Nach der Anbindung kannst du natürlichsprachlich fragen:
 
-- *„Welche Marketplaces gibt es?“* → `list_marketplaces`
+- *„Welche Subscriptions hat die Hosch AG aktiv?“* → **`list_company_subscriptions`** (`companyName`, ggf. `parentAccountId` / Env)
+- *„Finde Company Hosch“* → **`find_companies`**
 - *„Zeig Companies unter Parent 523525“* → `get_companies`
-- *„Hole Subscriptions für Account …“* → `get_subscriptions`
 - *„Latest Invoices für März 2026“* → `get_latest_invoices_for_period`
 - *„Lege einen User unter Company X an“* → `create_user` (Write)
 
-Discovery aller API-Endpoints:
+**Tipp:** Für Firmen-/Abo-Fragen nicht über Reports oder Marketplaces gehen — die Workflow-Tools sind dafür da. Subscription-Tools liefern standardmässig **kompakte** Antworten (`compact=true`).
 
-- Tool `list_api_endpoints` (optional Filter `tag`, `onlyReadable`)
+Discovery aller API-Endpoints: Tool `list_api_endpoints`.
 
 ---
 
 ## Tools (Überblick)
 
 ~58 Tools. Vollständige Liste inkl. Risiko-Flags: Tool **`list_api_endpoints`**.
+
+### Empfohlene Workflows
+| Tool | Zweck |
+|------|--------|
+| `find_companies` | Firma nach Name unter Parent suchen |
+| `list_company_subscriptions` | Aktive/kompakte Subscriptions einer Firma (Name oder Account-ID) |
 
 ### Session & Meta
 | Tool | Zweck |
@@ -254,7 +261,7 @@ Discovery aller API-Endpoints:
 | Bereich | Tools |
 |---------|--------|
 | Company / Reseller / Dept / User | `get_*`, `get_*_by_vat_id`, Listen |
-| Subscriptions | `get_subscription(s)`, `get_subscription_with_addons`, `get_possible_services_for_parent` |
+| Subscriptions | `get_subscription(s)` (compact), `get_subscription_with_addons`, `get_possible_services_for_parent` |
 | Catalog | `get_owned_marketplaces`, `list_marketplace_services`, `get_available_services_for_marketplace`, `get_service_information` |
 | Billing | `get_reports`, `execute_report`, `get_latest_invoices*`, `get_preview_invoices`, `get_invoice_aggregation_report` |
 | Sonst | `get_credit_limit`, `get_security_roles`, `get_special_deal` |
