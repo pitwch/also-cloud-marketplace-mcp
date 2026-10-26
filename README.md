@@ -33,6 +33,10 @@ Benötigte Umgebungsvariablen:
 `ALSO_CLOUD_MARKETPLACE` akzeptiert eine **volle URL** oder einen **Country-Key**:  
 `Switzerland`, `Germany`, `Austria`, `Debug`, …
 
+### Hinweis: 2FA
+
+ALSO Cloud Marketplace-Accounts haben **standardmässig 2FA aktiviert**. Die Simple API und dieses MCP unterstützen nur Login mit Benutzername und Passwort — **2FA funktioniert damit nicht**. Für die API-/MCP-Nutzung muss 2FA für den betreffenden Account über das **ALSO Supportportal** deaktiviert werden (Support-Anfrage).
+
 ---
 
 ## Installation in Clients
@@ -168,7 +172,7 @@ codex mcp list
 
 In der TUI: `/mcp` zeigt verbundene Server.
 
-**Hinweis ChatGPT Web:** Custom MCP dort braucht i. d. R. einen **öffentlichen HTTPS-Endpoint** (Remote/Tunnel), kein lokales stdio. Für lokalen Betrieb Codex CLI / Desktop verwenden.
+**ChatGPT im Browser:** lokales stdio geht hier nicht nativ — siehe unten [Browser (MCP SuperAssistant)](#browser-chatgpt-gemini-perplexity--mcp-superassistant). Für natives MCP: Codex CLI / ChatGPT Desktop.
 
 Docs: [OpenAI MCP / Codex](https://learn.chatgpt.com/docs/extend/mcp)
 
@@ -178,6 +182,43 @@ Docs: [OpenAI MCP / Codex](https://learn.chatgpt.com/docs/extend/mcp)
 
 Je nach Extension analog Cursor: MCP-Server mit `command`/`args`/`env` eintragen.  
 Pfad auf `dist/index.js` zeigen und Credentials setzen.
+
+---
+
+### Browser (ChatGPT, Gemini, Perplexity, …) — MCP SuperAssistant
+
+Für Web-Clients ohne natives lokales MCP (z. B. **ChatGPT**, **Gemini**, **Perplexity**, **Grok**, **Google AI Studio**) eignet sich [MCP SuperAssistant](https://mcpsuperassistant.ai/) (Browser-Extension + lokaler Proxy).
+
+1. Extension installieren: [Chrome Web Store](https://chromewebstore.google.com/detail/mcp-superassistant/kngiafgkdnlkgmefdafaibkibegkcaef) (auch Firefox / Chromium-Browser). Docs: [Installation](https://mcpsuperassistant.ai/docs/getting-started/installation).
+2. `config.json` anlegen (gleicher `also-cloud`-Block wie bei Cursor):
+
+```json
+{
+  "mcpServers": {
+    "also-cloud": {
+      "command": "node",
+      "args": ["C:/DEV/also-cloud-marketplace-mcp/dist/index.js"],
+      "env": {
+        "ALSO_CLOUD_MARKETPLACE": "Switzerland",
+        "ALSO_CLOUDUSER": "you@example.com",
+        "ALSO_CLOUDPW": "your-password"
+      }
+    }
+  }
+}
+```
+
+   Alternativ eine bestehende Cursor-/Claude-Config nutzen.
+
+3. Proxy starten (im Terminal, Repo oder Ordner mit der Config):
+
+```bash
+npx -y @srbhptl39/mcp-superassistant-proxy@latest --config ./config.json --outputTransport sse
+```
+
+   Default-URL: `http://localhost:3006/sse`
+
+4. ChatGPT / Gemini / … öffnen → MCP-Sidebar → Server-Status → Connect auf `http://localhost:3006/sse` → MCP-Instructions-Prompt per **Insert** oder **Attach** in den Chat legen → Tools nutzen.
 
 ---
 
@@ -243,14 +284,6 @@ npm start          # node dist/index.js
 ```
 
 **Wichtig:** Auf stdout nur MCP-JSON-RPC schreiben — Logs nur mit `console.error`.
-
----
-
-## Sicherheit
-
-- Credentials nie committen; nur in Client-`env` oder lokaler `.env` (nicht für stdio-Hosts nötig, wenn `env` in der MCP-Config steht).
-- Write-Tools ändern Produktivdaten — Clients mit Tool-Bestätigung nutzen (Cursor/Claude/Gemini Prompt).
-- Destruktive Operationen bewusst hinter `api_request` belassen.
 
 ---
 
