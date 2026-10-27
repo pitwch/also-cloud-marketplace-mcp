@@ -5,6 +5,7 @@ import { getSharedClient } from './also-client.js';
 import { SERVER_INSTRUCTIONS } from './instructions.js';
 import { MARKETPLACES } from './marketplaces.js';
 import {
+  redactSecrets,
   summarizeSubscription,
   summarizeSubscriptions,
 } from './summarize.js';
@@ -19,19 +20,20 @@ const resellerContext = z
   .int()
   .optional()
   .describe('Optional reseller context Account ID (omit if unused)');
-const compactFlag = z
+/** Opt-in only — omit or false keeps compact summaries (avoids huge Fields dumps). */
+const fullDetailFlag = z
   .boolean()
   .optional()
-  .default(true)
+  .default(false)
   .describe(
-    'If true (default), return a compact summary without huge Fields/PriceableItems arrays. Set false for full API payload.',
+    'If true, return the raw API payload (Fields/PriceableItems). Default false = compact summary. Secrets like InitialPassword are redacted.',
   );
 
 export function createServer(): McpServer {
   const server = new McpServer(
     {
       name: 'also-cloud-marketplace',
-      version: '0.1.0',
+      version: '0.2.0',
     },
     { instructions: SERVER_INSTRUCTIONS },
   );
@@ -200,17 +202,23 @@ export function createServer(): McpServer {
     {
       title: 'Get subscription',
       description:
-        'GetSubscription by accountId. Prefer list_company_subscriptions for company-wide lists. compact=true by default.',
-      inputSchema: z.object({ accountId, resellerContext, compact: compactFlag }),
+        'GetSubscription by accountId. Prefer list_company_subscriptions. Always compact unless fullDetail=true.',
+      inputSchema: z.object({
+        accountId,
+        resellerContext,
+        fullDetail: fullDetailFlag,
+      }),
     },
-    async ({ accountId: id, resellerContext: rc, compact = true }) => {
+    async ({ accountId: id, resellerContext: rc, fullDetail = false }) => {
       try {
         const body: Record<string, unknown> = { accountId: id };
         if (rc !== undefined) body.resellerContext = rc;
         const res = await alsoPost('GetSubscription', body);
         return textResult({
           status: res.status,
-          body: compact ? summarizeSubscription(res.body) : res.body,
+          body: fullDetail
+            ? redactSecrets(res.body)
+            : summarizeSubscription(res.body),
         });
       } catch (err) {
         return textResult(err instanceof Error ? err.message : String(err), true);
@@ -223,7 +231,7 @@ export function createServer(): McpServer {
     {
       title: 'Get subscriptions',
       description:
-        'GetSubscriptions under parentAccountId. For "subscriptions of company X by name" prefer list_company_subscriptions. compact=true by default (drops huge Fields arrays).',
+        'GetSubscriptions under parentAccountId. Prefer list_company_subscriptions / list_azure_subscriptions. Always compact unless fullDetail=true.',
       inputSchema: z.object({
         parentAccountId,
         resellerContext,
@@ -231,19 +239,20 @@ export function createServer(): McpServer {
           .boolean()
           .optional()
           .describe('If true, exclude user-level subscriptions'),
-        compact: compactFlag,
+        fullDetail: fullDetailFlag,
         activeOnly: z
           .boolean()
           .optional()
-          .describe('When compact=true, only include Active subscriptions'),
+          .default(true)
+          .describe('When compact (default), only include Active subscriptions'),
       }),
     },
     async ({
       parentAccountId: parent,
       resellerContext: rc,
       excludeUserLevel,
-      compact = true,
-      activeOnly,
+      fullDetail = false,
+      activeOnly = true,
     }) => {
       try {
         const body: Record<string, unknown> = { parentAccountId: parent };
@@ -252,9 +261,9 @@ export function createServer(): McpServer {
         const res = await alsoPost('GetSubscriptions', body);
         return textResult({
           status: res.status,
-          body: compact
-            ? summarizeSubscriptions(res.body, Boolean(activeOnly))
-            : res.body,
+          body: fullDetail
+            ? redactSecrets(res.body)
+            : summarizeSubscriptions(res.body, Boolean(activeOnly)),
         });
       } catch (err) {
         return textResult(err instanceof Error ? err.message : String(err), true);

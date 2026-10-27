@@ -4,26 +4,49 @@ const INTERESTING_FIELD_NAMES = new Set(
   [
     'TenantId',
     'TenantID',
+    'MicrosoftTenantId',
     'Domain',
     'AzureSubscriptionId',
+    'InitialAzureSubscriptionID',
     'SubscriptionId',
     'SubscriptionName',
     'PlanName',
     'Name',
     'ReservationName',
+    'ReservationID',
     'SKU',
     'Sku',
     'Quantity',
+    'QuantityVcores',
     'Region',
     'Term',
     'StartDate',
     'EndDate',
+    'EffectiveDateTime',
+    'ExpirationDate',
     'BillingCycle',
+    'Billingcycle',
+    'BillingType',
     'OfferId',
     'ProductId',
     'CustomerTenantId',
+    'Managedresources',
+    'Unmanagedresources',
+    'CurrentforecastvalueEndcustomer',
+    'MonthlybillforecastEndcustomer',
+    'HourlyCommitment',
+    'OcpSubscriptionId',
   ].map((s) => s.toLowerCase()),
 );
+
+const SECRET_FIELD_NAMES = new Set(
+  ['initialpassword', 'password', 'secret', 'apikey', 'apitoken'].map((s) =>
+    s.toLowerCase(),
+  ),
+);
+
+const AZURE_SERVICE_RE =
+  /azure\s*plan|azure\s*reserved|reserved\s*instance|savings\s*plan|alsoazureplan/i;
 
 function asRecord(v: unknown): Record<string, unknown> | null {
   return v !== null && typeof v === 'object' && !Array.isArray(v)
@@ -39,6 +62,7 @@ function fieldMap(raw: Record<string, unknown>): Record<string, unknown> {
     const f = asRecord(item);
     if (!f || f.Name == null) continue;
     const name = String(f.Name);
+    if (SECRET_FIELD_NAMES.has(name.toLowerCase())) continue;
     const value = f.Value;
     if (value === undefined || value === null || value === '') continue;
     if (INTERESTING_FIELD_NAMES.has(name.toLowerCase())) {
@@ -46,6 +70,25 @@ function fieldMap(raw: Record<string, unknown>): Record<string, unknown> {
     }
   }
   return out;
+}
+
+/** Remove secrets from a full API subscription/company payload. */
+export function redactSecrets(raw: unknown): unknown {
+  if (Array.isArray(raw)) return raw.map(redactSecrets);
+  const r = asRecord(raw);
+  if (!r) return raw;
+  const copy: Record<string, unknown> = { ...r };
+  if (Array.isArray(copy.Fields)) {
+    copy.Fields = copy.Fields.map((item) => {
+      const f = asRecord(item);
+      if (!f || f.Name == null) return item;
+      if (SECRET_FIELD_NAMES.has(String(f.Name).toLowerCase())) {
+        return { ...f, Value: '[REDACTED]' };
+      }
+      return item;
+    });
+  }
+  return copy;
 }
 
 export function summarizeCompany(raw: unknown) {
@@ -74,11 +117,15 @@ export function summarizeSubscription(raw: unknown) {
   return {
     accountId: s.AccountId,
     parentAccountId: s.ParentAccountId,
+    companyAccountId: s.CompanyAccountId,
     accountState: s.AccountState,
-    serviceName:
-      s.ServiceName ?? s.Name ?? s.ProductName ?? s.ServiceDisplayName ?? null,
-    displayName: s.DisplayName ?? s.FriendlyName ?? null,
-    creationDate: s.CreationDate ?? s.BillingStartDate ?? null,
+    serviceName: s.ServiceName ?? null,
+    serviceDisplayName:
+      s.ServiceDisplayName ?? s.DisplayName ?? s.FriendlyName ?? null,
+    vendor: s.VendorDisplayName ?? null,
+    billingStartDate: s.BillingStartDate ?? null,
+    contractEndDate: s.ContractEndDate ?? null,
+    provisioningStatus: s.ProvisioningStatus ?? null,
     fields: Object.keys(fields).length ? fields : undefined,
   };
 }
@@ -93,6 +140,13 @@ export function summarizeSubscriptions(list: unknown, activeOnly = false) {
     });
   }
   return items;
+}
+
+export function isAzureRelatedSubscription(summary: unknown): boolean {
+  const s = asRecord(summary);
+  if (!s) return false;
+  const hay = `${s.serviceName ?? ''} ${s.serviceDisplayName ?? ''}`;
+  return AZURE_SERVICE_RE.test(hay);
 }
 
 export function filterCompaniesByName(list: unknown, name: string) {

@@ -3,6 +3,7 @@ import * as z from 'zod/v4';
 import { alsoPost, textResult } from './tools-helpers.js';
 import {
   filterCompaniesByName,
+  isAzureRelatedSubscription,
   summarizeCompany,
   summarizeSubscriptions,
 } from './summarize.js';
@@ -15,6 +16,25 @@ function defaultParentAccountId(): number | undefined {
   if (!raw) return undefined;
   const n = Number(raw);
   return Number.isFinite(n) ? n : undefined;
+}
+
+async function mapPool<T, R>(
+  items: T[],
+  concurrency: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let next = 0;
+  async function worker() {
+    for (;;) {
+      const i = next++;
+      if (i >= items.length) return;
+      out[i] = await fn(items[i]!);
+    }
+  }
+  const n = Math.min(concurrency, Math.max(1, items.length));
+  await Promise.all(Array.from({ length: n }, () => worker()));
+  return out;
 }
 
 /**
@@ -162,6 +182,101 @@ export function registerWorkflowTools(server: McpServer): void {
           activeOnly,
           count: subscriptions.length,
           subscriptions,
+        });
+      } catch (err) {
+        return textResult(err instanceof Error ? err.message : String(err), true);
+      }
+    },
+  );
+
+  server.registerTool(
+    'list_azure_subscriptions',
+    {
+      title: 'List Azure / RI / Savings Plan portfolio',
+      description:
+        'PREFERRED for Azure Plan, Reserved Instance, and Savings Plan overview across all end customers under parentAccountId. Returns compact rows (company + subscription). Do NOT loop get_subscriptions per company manually.',
+      inputSchema: z.object({
+        parentAccountId: z
+          .number()
+          .int()
+          .optional()
+          .describe('Reseller parent; defaults to ALSO_CLOUD_PARENT_ACCOUNT_ID'),
+        activeOnly: z
+          .boolean()
+          .optional()
+          .default(true)
+          .describe('Only Active subscriptions'),
+        companyName: z
+          .string()
+          .optional()
+          .describe('Optional filter: only companies whose name contains this'),
+      }),
+      annotations: { readOnlyHint: true, openWorldHint: true },
+    },
+    async ({ parentAccountId, activeOnly = true, companyName }) => {
+      try {
+        const parent = parentAccountId ?? defaultParentAccountId();
+        if (parent == null) {
+          return textResult(
+            'parentAccountId is required (or set ALSO_CLOUD_PARENT_ACCOUNT_ID).',
+            true,
+          );
+        }
+        const list = await alsoPost('GetCompanies', { parentAccountId: parent });
+        const rawCompanies = Array.isArray(list.body) ? list.body : [];
+        type CompanyRow = {
+          accountId?: number;
+          companyName?: string;
+          customerId?: string;
+        };
+        const rows: CompanyRow[] = (
+          companyName?.trim()
+            ? filterCompaniesByName(rawCompanies, companyName)
+            : rawCompanies.map(summarizeCompany)
+        ) as CompanyRow[];
+
+        const perCompany = await mapPool(rows, 5, async (co) => {
+          const id = Number(co.accountId);
+          if (!Number.isFinite(id)) {
+            return { company: co, subscriptions: [] as unknown[], error: 'bad id' };
+          }
+          try {
+            const subs = await alsoPost('GetSubscriptions', {
+              parentAccountId: id,
+            });
+            const all = summarizeSubscriptions(subs.body, activeOnly);
+            const azure = all.filter(isAzureRelatedSubscription);
+            return { company: co, subscriptions: azure };
+          } catch (err) {
+            return {
+              company: co,
+              subscriptions: [] as unknown[],
+              error: err instanceof Error ? err.message : String(err),
+            };
+          }
+        });
+
+        const flat = perCompany.flatMap((entry) =>
+          entry.subscriptions.map((sub) => ({
+            companyAccountId: entry.company.accountId,
+            companyName: entry.company.companyName,
+            customerId: entry.company.customerId,
+            ...(typeof sub === 'object' && sub !== null ? sub : { subscription: sub }),
+          })),
+        );
+
+        return textResult({
+          parentAccountId: parent,
+          companyCount: rows.length,
+          azureSubscriptionCount: flat.length,
+          companiesWithErrors: perCompany
+            .filter((e) => 'error' in e && e.error)
+            .map((e) => ({
+              companyAccountId: e.company.accountId,
+              companyName: e.company.companyName,
+              error: (e as { error?: string }).error,
+            })),
+          subscriptions: flat,
         });
       } catch (err) {
         return textResult(err instanceof Error ? err.message : String(err), true);

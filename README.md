@@ -228,12 +228,13 @@ npx -y @srbhptl39/mcp-superassistant-proxy@latest --config ./config.json --outpu
 Nach der Anbindung kannst du natürlichsprachlich fragen:
 
 - *„Welche Subscriptions hat die Hosch AG aktiv?“* → **`list_company_subscriptions`** (`companyName`, ggf. `parentAccountId` / Env)
+- *„Alle Azure-/VM-Subscriptions / Optimierung RI“* → **`list_azure_subscriptions`**
 - *„Finde Company Hosch“* → **`find_companies`**
 - *„Zeig Companies unter Parent 523525“* → `get_companies`
 - *„Latest Invoices für März 2026“* → `get_latest_invoices_for_period`
 - *„Lege einen User unter Company X an“* → `create_user` (Write)
 
-**Tipp:** Für Firmen-/Abo-Fragen nicht über Reports oder Marketplaces gehen — die Workflow-Tools sind dafür da. Subscription-Tools liefern standardmässig **kompakte** Antworten (`compact=true`).
+**Tipp:** Für Firmen-/Abo-Fragen nicht über Reports oder Marketplaces gehen — die Workflow-Tools sind dafür da. Subscription-Tools liefern standardmässig **kompakte** Antworten; Rohdaten nur mit `fullDetail=true`. Für Gemini CLI siehe [`GEMINI.md`](./GEMINI.md) (nach MCP-Update CLI neu starten).
 
 Discovery aller API-Endpoints: Tool `list_api_endpoints`.
 
@@ -248,6 +249,7 @@ Discovery aller API-Endpoints: Tool `list_api_endpoints`.
 |------|--------|
 | `find_companies` | Firma nach Name unter Parent suchen |
 | `list_company_subscriptions` | Aktive/kompakte Subscriptions einer Firma (Name oder Account-ID) |
+| `list_azure_subscriptions` | Azure Plan / RI / Savings Plan über alle Endkunden (Portfolio) |
 
 ### Session & Meta
 | Tool | Zweck |
@@ -261,7 +263,7 @@ Discovery aller API-Endpoints: Tool `list_api_endpoints`.
 | Bereich | Tools |
 |---------|--------|
 | Company / Reseller / Dept / User | `get_*`, `get_*_by_vat_id`, Listen |
-| Subscriptions | `get_subscription(s)` (compact), `get_subscription_with_addons`, `get_possible_services_for_parent` |
+| Subscriptions | `get_subscription(s)` (compact; `fullDetail` opt-in), `get_subscription_with_addons`, `get_possible_services_for_parent` |
 | Catalog | `get_owned_marketplaces`, `list_marketplace_services`, `get_available_services_for_marketplace`, `get_service_information` |
 | Billing | `get_reports`, `execute_report`, `get_latest_invoices*`, `get_preview_invoices`, `get_invoice_aggregation_report` |
 | Sonst | `get_credit_limit`, `get_security_roles`, `get_special_deal` |
