@@ -227,9 +227,9 @@ npx -y @srbhptl39/mcp-superassistant-proxy@latest --config ./config.json --outpu
 
 Nach der Anbindung kannst du natürlichsprachlich fragen:
 
-- *„Welche Subscriptions hat die Hosch AG aktiv?“* → **`list_company_subscriptions`** (`companyName`, ggf. `parentAccountId` / Env)
+- *„Welche Subscriptions hat die Demo AG aktiv?“* → **`list_company_subscriptions`** (`companyName`, ggf. `parentAccountId` / Env)
 - *„Alle Azure-/VM-Subscriptions / Optimierung RI“* → **`list_azure_subscriptions`**
-- *„Finde Company Hosch“* → **`find_companies`**
+- *„Finde Company Demo“* → **`find_companies`**
 - *„Zeig Companies unter Parent 523525“* → `get_companies`
 - *„Latest Invoices für März 2026“* → `get_latest_invoices_for_period`
 - *„Lege einen User unter Company X an“* → `create_user` (Write)
