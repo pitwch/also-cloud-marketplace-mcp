@@ -8,6 +8,10 @@
 | Subscriptions of one company | `list_company_subscriptions` |
 | All Azure Plan / RI / Savings Plans | `list_azure_subscriptions` |
 | One known subscription accountId | `get_subscription` (compact unless `fullDetail=true`) |
+| Exchange / change a Reserved Instance or Savings Plan | `get_reservation_options` |
+| Own account / default parentAccountId | `get_my_account` |
+
+`parentAccountId` is optional on all tools; it defaults to the configured or auto-detected own account.
 
 **Do not** use `get_reports`, `execute_report`, `get_owned_marketplaces`, or local source files to discover companies or subscriptions.
 

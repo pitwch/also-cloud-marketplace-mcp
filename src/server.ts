@@ -1,20 +1,40 @@
 import { McpServer } from '@modelcontextprotocol/server';
 import * as z from 'zod/v4';
+import {
+  requireParentAccountId,
+  resolveParentAccountId,
+  withParent,
+} from './account-context.js';
 import { API_CATALOG } from './api-catalog.js';
 import { getSharedClient } from './also-client.js';
 import { SERVER_INSTRUCTIONS } from './instructions.js';
 import { MARKETPLACES } from './marketplaces.js';
 import {
   redactSecrets,
+  summarizeCompany,
   summarizeSubscription,
   summarizeSubscriptions,
 } from './summarize.js';
-import { alsoPost, registerAlsoPostTool, textResult, tryParseJson } from './tools-helpers.js';
+import {
+  alsoPost,
+  LOCAL_READ_ONLY,
+  READ_ONLY,
+  registerAlsoPostTool,
+  textResult,
+  tryParseJson,
+  WRITE_IRREVERSIBLE,
+} from './tools-helpers.js';
 import { registerWorkflowTools } from './workflow-tools.js';
 import { registerWriteTools } from './write-tools.js';
 
 const accountId = z.number().int().describe('ALSO Cloud Account ID');
-const parentAccountId = z.number().int().describe('Parent Account ID');
+const parentAccountId = z
+  .number()
+  .int()
+  .optional()
+  .describe(
+    'Parent Account ID. Optional: defaults to ALSO_CLOUD_PARENT_ACCOUNT_ID or the auto-detected own account (see get_my_account).',
+  );
 const resellerContext = z
   .number()
   .int()
@@ -29,11 +49,57 @@ const fullDetailFlag = z
     'If true, return the raw API payload (Fields/PriceableItems). Default false = compact summary. Secrets like InitialPassword are redacted.',
   );
 
+let reportNamesCache: { names: string[]; at: number } | null = null;
+const REPORT_CACHE_MS = 10 * 60_000;
+
+/** Report names from GetReports (accepts string[] or objects with a name-like key). */
+export function extractReportNames(body: unknown): string[] {
+  const arr = Array.isArray(body) ? body : [];
+  const names = arr
+    .map((r) => {
+      if (typeof r === 'string') return r;
+      if (r && typeof r === 'object') {
+        const o = r as Record<string, unknown>;
+        const v = o.ReportName ?? o.Name ?? o.name ?? o.DisplayName;
+        return typeof v === 'string' ? v : undefined;
+      }
+      return undefined;
+    })
+    .filter((n): n is string => Boolean(n));
+  return [...new Set(names)];
+}
+
+async function getReportNames(): Promise<string[]> {
+  if (reportNamesCache && Date.now() - reportNamesCache.at < REPORT_CACHE_MS) {
+    return reportNamesCache.names;
+  }
+  const res = await alsoPost('GetReports', {});
+  const names = extractReportNames(res.body);
+  reportNamesCache = { names, at: Date.now() };
+  return names;
+}
+
+/** Rank valid names by shared lowercase tokens / substring with the query. */
+export function suggestNames(query: string, valid: string[], max = 5): string[] {
+  const tokens = query.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  return valid
+    .map((n) => {
+      const l = n.toLowerCase();
+      let score = tokens.filter((t) => l.includes(t)).length;
+      if (l.includes(query.toLowerCase()) || query.toLowerCase().includes(l)) score += 3;
+      return { n, score };
+    })
+    .filter((x) => x.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, max)
+    .map((x) => x.n);
+}
+
 export function createServer(): McpServer {
   const server = new McpServer(
     {
       name: 'also-cloud-marketplace',
-      version: '0.2.0',
+      version: '0.3.0',
     },
     { instructions: SERVER_INSTRUCTIONS },
   );
@@ -46,6 +112,7 @@ export function createServer(): McpServer {
       title: 'List country marketplace URLs',
       description:
         'Static country keys → marketplace base URLs (Switzerland, Germany, Debug, …). No credentials required. For API-owned marketplaces use get_owned_marketplaces.',
+      annotations: LOCAL_READ_ONLY,
       inputSchema: z.object({}),
     },
     async () => textResult(MARKETPLACES),
@@ -57,6 +124,7 @@ export function createServer(): McpServer {
       title: 'List Simple API endpoints',
       description:
         'Catalog of MarketplaceSimpleAPI 1.0.0 endpoints with tags, summaries, dedicated MCP tool names (if any), and write/destructive risk flags.',
+      annotations: LOCAL_READ_ONLY,
       inputSchema: z.object({
         tag: z.string().optional().describe('Filter by tag, e.g. Company, Subscription'),
         onlyReadable: z
@@ -84,12 +152,64 @@ export function createServer(): McpServer {
       title: 'Validate session',
       description:
         'Optional health check (PingPong). Login is automatic on other tools — do not call this before every query.',
+      annotations: READ_ONLY,
       inputSchema: z.object({}),
     },
     async () => {
       try {
         const ok = await getSharedClient().validateSession();
         return textResult({ valid: ok });
+      } catch (err) {
+        return textResult(err instanceof Error ? err.message : String(err), true);
+      }
+    },
+  );
+
+  server.registerTool(
+    'get_my_account',
+    {
+      title: 'Get my account (default parent)',
+      description:
+        'Returns the own account of the API user: the parentAccountId all other tools use by default, its source (env or auto-detected) and the company/reseller name. Use for: "what is my parentAccountId / account?" Call this first if a tool complains about a missing parentAccountId.',
+      inputSchema: z.object({}),
+      annotations: READ_ONLY,
+    },
+    async () => {
+      try {
+        const resolved = await resolveParentAccountId();
+        if (!resolved) {
+          return textResult(
+            {
+              accountId: null,
+              message:
+                'Auto-detection via GetSecurityRoles / GetLatestInvoices found no AccountId. Set ALSO_CLOUD_PARENT_ACCOUNT_ID on the server or pass parentAccountId explicitly.',
+            },
+            true,
+          );
+        }
+        let account: unknown = null;
+        let accountType: 'company' | 'reseller' | 'unknown' = 'unknown';
+        for (const [type, endpoint] of [
+          ['reseller', 'GetReseller'],
+          ['company', 'GetCompany'],
+        ] as const) {
+          try {
+            const res = await alsoPost(endpoint, { accountId: resolved.accountId });
+            if (res.body && typeof res.body === 'object') {
+              account = summarizeCompany(res.body);
+              accountType = type;
+              break;
+            }
+          } catch {
+            // try next account type
+          }
+        }
+        return textResult({
+          accountId: resolved.accountId,
+          source: resolved.source,
+          accountType,
+          account,
+        });
       } catch (err) {
         return textResult(err instanceof Error ? err.message : String(err), true);
       }
@@ -104,6 +224,7 @@ export function createServer(): McpServer {
     {
       title: 'Clear session',
       description: 'Drop the cached session token (forces fresh login on next call).',
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       inputSchema: z.object({}),
     },
     async () => {
@@ -120,6 +241,7 @@ export function createServer(): McpServer {
 
   registerAlsoPostTool(server, 'get_company', {
     title: 'Get company',
+    annotations: READ_ONLY,
     description: 'GetCompany — company by accountId.',
     endpoint: 'GetCompany',
     inputSchema: z.object({ accountId }),
@@ -127,14 +249,17 @@ export function createServer(): McpServer {
 
   registerAlsoPostTool(server, 'get_companies', {
     title: 'Get companies',
+    annotations: READ_ONLY,
     description:
       'GetCompanies — all first-level companies under parentAccountId. To search by name prefer find_companies.',
     endpoint: 'GetCompanies',
     inputSchema: z.object({ parentAccountId }),
+    mapBody: withParent,
   });
 
   registerAlsoPostTool(server, 'get_company_by_vat_id', {
     title: 'Get company by VAT ID',
+    annotations: READ_ONLY,
     description: 'GetCompanyByVatId.',
     endpoint: 'GetCompanyByVatId',
     inputSchema: z.object({
@@ -144,6 +269,7 @@ export function createServer(): McpServer {
 
   registerAlsoPostTool(server, 'get_reseller', {
     title: 'Get reseller',
+    annotations: READ_ONLY,
     description: 'GetReseller — reseller by accountId.',
     endpoint: 'GetReseller',
     inputSchema: z.object({ accountId }),
@@ -151,13 +277,16 @@ export function createServer(): McpServer {
 
   registerAlsoPostTool(server, 'get_resellers', {
     title: 'Get resellers',
+    annotations: READ_ONLY,
     description: 'GetResellers — resellers under parentAccountId.',
     endpoint: 'GetResellers',
     inputSchema: z.object({ parentAccountId }),
+    mapBody: withParent,
   });
 
   registerAlsoPostTool(server, 'get_reseller_by_vat_id', {
     title: 'Get reseller by VAT ID',
+    annotations: READ_ONLY,
     description: 'GetResellerByVatId.',
     endpoint: 'GetResellerByVatId',
     inputSchema: z.object({
@@ -167,6 +296,7 @@ export function createServer(): McpServer {
 
   registerAlsoPostTool(server, 'get_department', {
     title: 'Get department',
+    annotations: READ_ONLY,
     description: 'GetDepartment — department by accountId.',
     endpoint: 'GetDepartment',
     inputSchema: z.object({ accountId }),
@@ -174,13 +304,16 @@ export function createServer(): McpServer {
 
   registerAlsoPostTool(server, 'get_departments', {
     title: 'Get departments',
+    annotations: READ_ONLY,
     description: 'GetDepartments — departments under parentAccountId.',
     endpoint: 'GetDepartments',
     inputSchema: z.object({ parentAccountId }),
+    mapBody: withParent,
   });
 
   registerAlsoPostTool(server, 'get_user', {
     title: 'Get user',
+    annotations: READ_ONLY,
     description: 'GetUser — user by accountId.',
     endpoint: 'GetUser',
     inputSchema: z.object({ accountId }),
@@ -188,6 +321,7 @@ export function createServer(): McpServer {
 
   registerAlsoPostTool(server, 'get_users', {
     title: 'Get users',
+    annotations: READ_ONLY,
     description: 'GetUsers — users under companyAccountId.',
     endpoint: 'GetUsers',
     inputSchema: z.object({
@@ -203,6 +337,7 @@ export function createServer(): McpServer {
       title: 'Get subscription',
       description:
         'GetSubscription by accountId. Prefer list_company_subscriptions. Always compact unless fullDetail=true.',
+      annotations: READ_ONLY,
       inputSchema: z.object({
         accountId,
         resellerContext,
@@ -232,6 +367,7 @@ export function createServer(): McpServer {
       title: 'Get subscriptions',
       description:
         'GetSubscriptions under parentAccountId. Prefer list_company_subscriptions / list_azure_subscriptions. Always compact unless fullDetail=true.',
+      annotations: READ_ONLY,
       inputSchema: z.object({
         parentAccountId,
         resellerContext,
@@ -255,7 +391,9 @@ export function createServer(): McpServer {
       activeOnly = true,
     }) => {
       try {
-        const body: Record<string, unknown> = { parentAccountId: parent };
+        const body: Record<string, unknown> = {
+          parentAccountId: await requireParentAccountId(parent),
+        };
         if (rc !== undefined) body.resellerContext = rc;
         if (excludeUserLevel !== undefined) body.excludeUserLevel = excludeUserLevel;
         const res = await alsoPost('GetSubscriptions', body);
@@ -273,6 +411,7 @@ export function createServer(): McpServer {
 
   registerAlsoPostTool(server, 'get_subscription_with_addons', {
     title: 'Get subscription with addons',
+    annotations: READ_ONLY,
     description: 'GetSubscriptionWithAddons — full detail for one subscription including addons.',
     endpoint: 'GetSubscriptionWithAddons',
     inputSchema: z.object({ accountId, resellerContext }),
@@ -280,34 +419,74 @@ export function createServer(): McpServer {
 
   registerAlsoPostTool(server, 'get_possible_services_for_parent', {
     title: 'Get possible services for parent',
+    annotations: READ_ONLY,
     description: 'GetPossibleServicesForParent — services a parent can subscribe to.',
     endpoint: 'GetPossibleServicesForParent',
     inputSchema: z.object({ parentAccountId }),
+    mapBody: withParent,
   });
 
   // --- Invoices / reports ---
 
   registerAlsoPostTool(server, 'get_reports', {
     title: 'Get reports',
+    annotations: READ_ONLY,
     description:
-      'GetReports — list available report names. Do NOT use this to find companies or subscriptions; use find_companies / list_company_subscriptions.',
+      'GetReports — list the report names valid for execute_report. Not for: finding companies or subscriptions (use find_companies / list_company_subscriptions).',
     endpoint: 'GetReports',
     inputSchema: z.object({}),
   });
 
-  registerAlsoPostTool(server, 'execute_report', {
-    title: 'Execute report',
-    description: 'ExecuteReport — run a named report with parameters.',
-    endpoint: 'ExecuteReport',
-    inputSchema: z.object({
-      reportName: z.string().min(1),
-      parameters: z.record(z.string(), z.unknown()).default({}),
-      columns: z.record(z.string(), z.unknown()).optional(),
-    }),
-  });
+  server.registerTool(
+    'execute_report',
+    {
+      title: 'Execute report',
+      description:
+        'ExecuteReport — run a named report. reportName MUST be one of the names returned by get_reports (exact, case-insensitive match is corrected). An unknown name returns the list of valid names instead of calling the API. Not for: finding companies or subscriptions.',
+      annotations: READ_ONLY,
+      inputSchema: z.object({
+        reportName: z.string().min(1).describe('Exact report name from get_reports'),
+        parameters: z.record(z.string(), z.unknown()).default({}),
+        columns: z.record(z.string(), z.unknown()).optional(),
+      }),
+    },
+    async ({ reportName, parameters, columns }) => {
+      let validNames: string[] = [];
+      try {
+        validNames = await getReportNames();
+      } catch {
+        // GetReports failed — fall through and let ExecuteReport decide
+      }
+      const match = validNames.find((n) => n.toLowerCase() === reportName.trim().toLowerCase());
+      if (validNames.length && !match) {
+        return textResult(
+          {
+            error: `Unknown reportName "${reportName}".`,
+            suggestions: suggestNames(reportName, validNames),
+            validReportNames: validNames,
+          },
+          true,
+        );
+      }
+      try {
+        const body: Record<string, unknown> = { reportName: match ?? reportName, parameters };
+        if (columns !== undefined) body.columns = columns;
+        return textResult(await alsoPost('ExecuteReport', body));
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return textResult(
+          validNames.length
+            ? { error: msg, hint: 'Check reportName and parameters.', validReportNames: validNames }
+            : msg,
+          true,
+        );
+      }
+    },
+  );
 
   registerAlsoPostTool(server, 'get_latest_invoices', {
     title: 'Get latest invoices',
+    annotations: READ_ONLY,
     description: 'GetLatestInvoices for the authenticated account.',
     endpoint: 'GetLatestInvoices',
     inputSchema: z.object({
@@ -318,6 +497,7 @@ export function createServer(): McpServer {
 
   registerAlsoPostTool(server, 'get_latest_invoices_for_period', {
     title: 'Get invoices for period',
+    annotations: READ_ONLY,
     description: 'GetLatestInvoicesForPeriod — invoices for year/month.',
     endpoint: 'GetLatestInvoicesForPeriod',
     inputSchema: z.object({
@@ -330,6 +510,7 @@ export function createServer(): McpServer {
 
   registerAlsoPostTool(server, 'get_preview_invoices', {
     title: 'Get preview invoices',
+    annotations: READ_ONLY,
     description: 'GetPreviewInvoices — current open billing month preview.',
     endpoint: 'GetPreviewInvoices',
     inputSchema: z.object({
@@ -340,6 +521,7 @@ export function createServer(): McpServer {
 
   registerAlsoPostTool(server, 'get_invoice_aggregation_report', {
     title: 'Get invoice aggregation report',
+    annotations: READ_ONLY,
     description: 'GetInvoiceAggregationReport for year/month.',
     endpoint: 'GetInvoiceAggregationReport',
     inputSchema: z.object({
@@ -353,6 +535,7 @@ export function createServer(): McpServer {
 
   registerAlsoPostTool(server, 'get_owned_marketplaces', {
     title: 'Get owned marketplaces',
+    annotations: READ_ONLY,
     description: 'GetMarketplaces — marketplaces owned by the company (API).',
     endpoint: 'GetMarketplaces',
     inputSchema: z.object({}),
@@ -360,6 +543,7 @@ export function createServer(): McpServer {
 
   registerAlsoPostTool(server, 'list_marketplace_services', {
     title: 'List marketplace services',
+    annotations: READ_ONLY,
     description: 'ListMarketplaceServices for marketplaceId.',
     endpoint: 'ListMarketplaceServices',
     inputSchema: z.object({
@@ -369,6 +553,7 @@ export function createServer(): McpServer {
 
   registerAlsoPostTool(server, 'get_available_services_for_marketplace', {
     title: 'Get available marketplace services',
+    annotations: READ_ONLY,
     description: 'GetAvailableServicesForMarketplace.',
     endpoint: 'GetAvailableServicesForMarketplace',
     inputSchema: z.object({
@@ -379,6 +564,7 @@ export function createServer(): McpServer {
 
   registerAlsoPostTool(server, 'get_service_information', {
     title: 'Get service information',
+    annotations: READ_ONLY,
     description: 'GetServiceInformation by serviceName.',
     endpoint: 'GetServiceInformation',
     inputSchema: z.object({
@@ -390,20 +576,23 @@ export function createServer(): McpServer {
 
   registerAlsoPostTool(server, 'get_credit_limit', {
     title: 'Get credit limit',
-    description: 'GetCreditLimit for company accountId.',
+    annotations: READ_ONLY,
+    description: 'GetCreditLimit — current credit limit (Kreditlimite) of a company.',
     endpoint: 'GetCreditLimit',
     inputSchema: z.object({ accountId }),
   });
 
   registerAlsoPostTool(server, 'get_security_roles', {
     title: 'Get security roles',
-    description: 'GetSecurityRoles for company/reseller accountId.',
+    annotations: READ_ONLY,
+    description: 'GetSecurityRoles — security roles and their users for a company/reseller. To find your own account ID use get_my_account.',
     endpoint: 'GetSecurityRoles',
     inputSchema: z.object({ accountId: accountId.optional() }),
   });
 
   registerAlsoPostTool(server, 'get_special_deal', {
     title: 'Get special deal',
+    annotations: READ_ONLY,
     description: 'GetSpecialDeal discounts for accountId.',
     endpoint: 'GetSpecialDeal',
     inputSchema: z.object({ accountId }),
@@ -420,6 +609,7 @@ export function createServer(): McpServer {
       title: 'API request',
       description:
         'Generic authenticated Simple API call. Prefer dedicated tools when available. Use this for destructive ops (TerminateAccount, DeleteMarketplace*, DeleteSpecialDeal) and rare endpoints. ALSO Simple API is POST-only for almost all operations.',
+      annotations: WRITE_IRREVERSIBLE,
       inputSchema: z.object({
         method: z
           .enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE'])

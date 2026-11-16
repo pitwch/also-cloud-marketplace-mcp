@@ -29,7 +29,7 @@ Benötigte Umgebungsvariablen:
 | `ALSO_CLOUDPW` | `••••••••` | ja |
 | `ALSO_CLOUD_TIMEOUT_MS` | `30000` | nein |
 | `ALSO_CLOUD_API_PREFIX` | `/SimpleAPI/.../rest` | nein |
-| `ALSO_CLOUD_PARENT_ACCOUNT_ID` | `315818` | nein (Default-Parent für Namenssuche) |
+| `ALSO_CLOUD_PARENT_ACCOUNT_ID` | `315818` | nein (Default-Parent; ohne Wert wird der eigene Account automatisch erkannt, siehe `get_my_account`) |
 
 `ALSO_CLOUD_MARKETPLACE` akzeptiert eine **volle URL** oder einen **Country-Key**:  
 `Switzerland`, `Germany`, `Austria`, `Debug`, …
@@ -229,7 +229,9 @@ Nach der Anbindung kannst du natürlichsprachlich fragen:
 
 - *„Welche Subscriptions hat die Demo AG aktiv?“* → **`list_company_subscriptions`** (`companyName`, ggf. `parentAccountId` / Env)
 - *„Alle Azure-/VM-Subscriptions / Optimierung RI“* → **`list_azure_subscriptions`**
-- *„Finde Company Demo“* → **`find_companies`**
+- *„Finde Company Demo“* → **`find_companies`** (meldet ähnliche Namen als `possibleDuplicates`)
+- *„Reservation der Demo AG tauschen“* → **`get_reservation_options`** (zeigt Custom Actions / Upgrade / Renew oder den Hinweis aufs Webportal)
+- *„Was ist meine Parent-ID?“* → **`get_my_account`**
 - *„Zeig Companies unter Parent 523525“* → `get_companies`
 - *„Latest Invoices für März 2026“* → `get_latest_invoices_for_period`
 - *„Lege einen User unter Company X an“* → `create_user` (Write)
@@ -242,7 +244,7 @@ Discovery aller API-Endpoints: Tool `list_api_endpoints`.
 
 ## Tools (Überblick)
 
-~58 Tools. Vollständige Liste inkl. Risiko-Flags: Tool **`list_api_endpoints`**.
+~60 Tools. Vollständige Liste inkl. Risiko-Flags: Tool **`list_api_endpoints`**.
 
 ### Empfohlene Workflows
 | Tool | Zweck |
@@ -250,6 +252,8 @@ Discovery aller API-Endpoints: Tool `list_api_endpoints`.
 | `find_companies` | Firma nach Name unter Parent suchen |
 | `list_company_subscriptions` | Aktive/kompakte Subscriptions einer Firma (Name oder Account-ID) |
 | `list_azure_subscriptions` | Azure Plan / RI / Savings Plan über alle Endkunden (Portfolio) |
+| `get_reservation_options` | Tausch-/Änderungs-/Renew-Optionen für RI und Savings Plans (read-only) |
+| `get_my_account` | Eigener Account = Default-`parentAccountId` (env oder automatisch erkannt) |
 
 ### Session & Meta
 | Tool | Zweck |
@@ -265,7 +269,7 @@ Discovery aller API-Endpoints: Tool `list_api_endpoints`.
 | Company / Reseller / Dept / User | `get_*`, `get_*_by_vat_id`, Listen |
 | Subscriptions | `get_subscription(s)` (compact; `fullDetail` opt-in), `get_subscription_with_addons`, `get_possible_services_for_parent` |
 | Catalog | `get_owned_marketplaces`, `list_marketplace_services`, `get_available_services_for_marketplace`, `get_service_information` |
-| Billing | `get_reports`, `execute_report`, `get_latest_invoices*`, `get_preview_invoices`, `get_invoice_aggregation_report` |
+| Billing | `get_reports`, `execute_report` (prüft den Report-Namen gegen `get_reports`), `get_latest_invoices*`, `get_preview_invoices`, `get_invoice_aggregation_report` |
 | Sonst | `get_credit_limit`, `get_security_roles`, `get_special_deal` |
 
 ### Schreiben (gezielt freigeschaltet)

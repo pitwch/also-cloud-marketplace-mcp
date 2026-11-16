@@ -2,7 +2,7 @@ import { resolveMarketplace } from './marketplaces.js';
 
 const DEFAULT_API_PREFIX = '/SimpleAPI/SimpleAPIService.svc/rest';
 const DEFAULT_LOGIN = 'GetSessionToken';
-const USER_AGENT = 'also-cloud-marketplace-mcp/0.1.0';
+const USER_AGENT = 'also-cloud-marketplace-mcp/0.3.0';
 
 export type AlsoConfig = {
   marketplace: string;

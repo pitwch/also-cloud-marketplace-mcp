@@ -149,13 +149,71 @@ export function isAzureRelatedSubscription(summary: unknown): boolean {
   return AZURE_SERVICE_RE.test(hay);
 }
 
+const LEGAL_FORMS =
+  /\b(ag|gmbh|sa|sarl|s\s?a\s?r\s?l|sagl|kg|og|ug|ltd|llc|inc|co|kmg|gmbh\s?&\s?co|e\s?v|klg|genossenschaft|stiftung|verein)\b/g;
+
+/** Normalised company name for duplicate detection (case, umlauts, punctuation, legal form). */
+export function normalizeCompanyName(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/ä/g, 'ae')
+    .replace(/ö/g, 'oe')
+    .replace(/ü/g, 'ue')
+    .replace(/ß/g, 'ss')
+    .normalize('NFKD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-z0-9&\s]/g, ' ')
+    .replace(LEGAL_FORMS, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+export type DuplicateGroup = {
+  normalizedName: string;
+  companies: Array<{ accountId: unknown; companyName: unknown; accountState?: unknown }>;
+};
+
+/** Groups companies whose names are equal after normalisation (e.g. "DEMO AG" vs "Demo AG"). */
+export function findNameDuplicates(companies: unknown[]): DuplicateGroup[] {
+  const groups = new Map<string, DuplicateGroup>();
+  for (const c of companies) {
+    const r = asRecord(c);
+    if (!r) continue;
+    const raw = String(r.companyName ?? r.CompanyName ?? '');
+    const key = normalizeCompanyName(raw);
+    if (!key) continue;
+    const g = groups.get(key) ?? { normalizedName: key, companies: [] };
+    g.companies.push({
+      accountId: r.accountId ?? r.AccountId,
+      companyName: raw,
+      accountState: r.accountState ?? r.AccountState,
+    });
+    groups.set(key, g);
+  }
+  return [...groups.values()].filter((g) => g.companies.length > 1);
+}
+
+export const DUPLICATE_HINT =
+  'Some companies have near-identical names (possible duplicate customer accounts). Check accountId / customerId before acting.';
+
+const RESERVATION_RE = /reserved|reservation|savings\s*plan/i;
+
+/** Azure Reserved Instance or Savings Plan (not the plain Azure Plan). */
+export function isReservationSubscription(summary: unknown): boolean {
+  const s = asRecord(summary);
+  if (!s) return false;
+  return RESERVATION_RE.test(`${s.serviceName ?? ''} ${s.serviceDisplayName ?? ''}`);
+}
+
 export function filterCompaniesByName(list: unknown, name: string) {
   const q = name.trim().toLowerCase();
+  const qNorm = normalizeCompanyName(name);
   const arr = Array.isArray(list) ? list : [];
   return arr
     .map(summarizeCompany)
     .filter((c) => {
-      const n = String(asRecord(c)?.companyName ?? '').toLowerCase();
-      return n.includes(q);
+      const raw = String(asRecord(c)?.companyName ?? '');
+      if (raw.toLowerCase().includes(q)) return true;
+      return qNorm.length > 0 && normalizeCompanyName(raw).includes(qNorm);
     });
 }

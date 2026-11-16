@@ -39,6 +39,32 @@ export type AlsoToolAnnotations = {
   openWorldHint?: boolean;
 };
 
+/** Read-only call against the ALSO API. */
+export const READ_ONLY = { readOnlyHint: true, openWorldHint: true } as const;
+/** Read-only, no external call (static data / local session state). */
+export const LOCAL_READ_ONLY = { readOnlyHint: true, openWorldHint: false } as const;
+/** Creates something new; nothing existing is overwritten. */
+export const WRITE_CREATE = {
+  readOnlyHint: false,
+  destructiveHint: false,
+  idempotentHint: false,
+  openWorldHint: true,
+} as const;
+/** Overwrites existing values; repeating the same call has no further effect. */
+export const WRITE_UPDATE = {
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: true,
+  openWorldHint: true,
+} as const;
+/** Triggers an irreversible business action (provisioning, approval, billing). */
+export const WRITE_IRREVERSIBLE = {
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
+} as const;
+
 /** Register a typed POST wrapper around an ALSO Simple API endpoint. */
 export function registerAlsoPostTool<T extends z.ZodRawShape>(
   server: McpServer,
@@ -48,8 +74,9 @@ export function registerAlsoPostTool<T extends z.ZodRawShape>(
     description: string;
     endpoint: string;
     inputSchema: z.ZodObject<T>;
-    mapBody?: (args: z.infer<z.ZodObject<T>>) => unknown;
-    annotations?: AlsoToolAnnotations;
+    mapBody?: (args: z.infer<z.ZodObject<T>>) => unknown | Promise<unknown>;
+    /** Required so every tool is flagged read-only / write in MCP clients. */
+    annotations: AlsoToolAnnotations;
   },
 ) {
   server.registerTool(
@@ -63,7 +90,7 @@ export function registerAlsoPostTool<T extends z.ZodRawShape>(
     async (args) => {
       try {
         const body = config.mapBody
-          ? config.mapBody(args)
+          ? await config.mapBody(args)
           : stripUndefined(args as Record<string, unknown>);
         return textResult(await alsoPost(config.endpoint, body));
       } catch (err) {
@@ -78,7 +105,7 @@ export const jsonObject = z
   .record(z.string(), z.unknown())
   .describe('JSON object as required by the ALSO Simple API');
 
-function stripUndefined(obj: Record<string, unknown>): Record<string, unknown> {
+export function stripUndefined(obj: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(obj)) {
     if (v !== undefined) out[k] = v;

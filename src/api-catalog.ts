@@ -60,7 +60,7 @@ export const API_CATALOG: ApiEndpointInfo[] = [
   { endpoint: 'UpdateSubscription', tag: 'Subscription management', summary: 'Updates a service subscription.', tool: 'update_subscription', risk: 'write' },
 
   // Subscription actions
-  { endpoint: 'GetAccountCustomActionsWithFields', tag: 'Subscription actions', summary: 'Custom action list for a subscription.', tool: 'get_account_custom_actions' },
+  { endpoint: 'GetAccountCustomActionsWithFields', tag: 'Subscription actions', summary: 'Custom action list for a subscription (RI/SP: see get_reservation_options).', tool: 'get_account_custom_actions' },
   { endpoint: 'GetRemoteEnumValuesForCustomAction', tag: 'Subscription actions', summary: 'Remote enums for custom action fields.' },
   { endpoint: 'ExecuteAccountCustomAction', tag: 'Subscription actions', summary: 'Executes a custom action.', tool: 'execute_account_custom_action', risk: 'write' },
   { endpoint: 'RetryLastFailedProvisioning', tag: 'Subscription actions', summary: 'Retries last failed provisioning.', tool: 'retry_last_failed_provisioning', risk: 'write' },
@@ -98,7 +98,7 @@ export const API_CATALOG: ApiEndpointInfo[] = [
   { endpoint: 'UpdateMarketplaceServiceCharges', tag: 'Marketplace price management', summary: 'Updates marketplace service charges.', risk: 'write' },
 
   // Security / Special Deal / Upgrade / Renew
-  { endpoint: 'GetSecurityRoles', tag: 'Security', summary: 'Security roles for company/reseller.', tool: 'get_security_roles' },
+  { endpoint: 'GetSecurityRoles', tag: 'Security', summary: 'Security roles for company/reseller (also used to auto-detect the own account → get_my_account).', tool: 'get_security_roles' },
   { endpoint: 'UpdateSecurityRolesUsers', tag: 'Security', summary: 'Updates security role users.', risk: 'write' },
   { endpoint: 'GetSpecialDeal', tag: 'Special Deal', summary: 'Special deal discounts for account.', tool: 'get_special_deal' },
   { endpoint: 'SetSpecialDeal', tag: 'Special Deal', summary: 'Creates a special deal discount.', tool: 'set_special_deal', risk: 'write' },
