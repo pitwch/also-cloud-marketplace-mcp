@@ -24,6 +24,7 @@ import {
   tryParseJson,
   WRITE_IRREVERSIBLE,
 } from './tools-helpers.js';
+import { registerRemoteEnumTools } from './remote-enums.js';
 import { registerWorkflowTools } from './workflow-tools.js';
 import { registerWriteTools } from './write-tools.js';
 
@@ -48,6 +49,9 @@ const fullDetailFlag = z
   .describe(
     'If true, return the raw API payload (Fields/PriceableItems). Default false = compact summary. Secrets like InitialPassword are redacted.',
   );
+
+/** Endpoints api_read may call: read-only by ALSO naming convention. */
+const READ_ENDPOINT_RE = /^(?!GetSessionToken$)(Get|List)[A-Za-z0-9]+$/;
 
 let reportNamesCache: { names: string[]; at: number } | null = null;
 const REPORT_CACHE_MS = 10 * 60_000;
@@ -600,15 +604,57 @@ export function createServer(): McpServer {
 
   // --- Targeted writes (Create/Update, subscription, credit, upgrade/renew) ---
   registerWriteTools(server);
+  registerRemoteEnumTools(server);
 
   // --- Escape hatch ---
+
+  server.registerTool(
+    'api_read',
+    {
+      title: 'API read (read-only)',
+      description:
+        'Read-only generic Simple API call for endpoints WITHOUT a dedicated tool. Only Get*/List* endpoints are allowed (e.g. GetRemoteEnums, GetRemoteEnumValuesForCustomAction, GetSubscriptionDependencies, GetSpecialProductTermsForService, GetMarketplaceServiceCharges); anything else is rejected. For empty SKU / Region choice lists use get_remote_enums. Not for: writes or deletes (use api_request).',
+      annotations: READ_ONLY,
+      inputSchema: z.object({
+        endpoint: z
+          .string()
+          .regex(READ_ENDPOINT_RE, 'Only Get*/List* endpoints are allowed')
+          .describe('Read endpoint name, e.g. GetRemoteEnums'),
+        body: z
+          .record(z.string(), z.unknown())
+          .optional()
+          .describe('JSON request body (ALSO read endpoints are called via POST)'),
+        method: z
+          .enum(['POST', 'GET'])
+          .default('POST')
+          .describe('POST for almost all ALSO endpoints; GET only if an endpoint requires it'),
+        query: z.record(z.string(), z.string()).optional(),
+      }),
+    },
+    async ({ endpoint, body, method, query }) => {
+      if (!READ_ENDPOINT_RE.test(endpoint)) {
+        return textResult(`Endpoint "${endpoint}" is not a read endpoint (Get*/List*).`, true);
+      }
+      try {
+        const result = await getSharedClient().request({
+          method,
+          endpoint,
+          body: method === 'GET' ? undefined : (body ?? {}),
+          query,
+        });
+        return textResult({ status: result.status, body: tryParseJson(result.body) });
+      } catch (err) {
+        return textResult(err instanceof Error ? err.message : String(err), true);
+      }
+    },
+  );
 
   server.registerTool(
     'api_request',
     {
       title: 'API request',
       description:
-        'Generic authenticated Simple API call. Prefer dedicated tools when available. Use this for destructive ops (TerminateAccount, DeleteMarketplace*, DeleteSpecialDeal) and rare endpoints. ALSO Simple API is POST-only for almost all operations.',
+        'WRITE / DESTRUCTIVE generic Simple API call. For pure reads use api_read instead. Use this only for destructive ops (TerminateAccount, DeleteMarketplace*, DeleteSpecialDeal) and rare write endpoints, after explicit user confirmation. ALSO Simple API is POST-only for almost all operations.',
       annotations: WRITE_IRREVERSIBLE,
       inputSchema: z.object({
         method: z

@@ -29,7 +29,7 @@ Benötigte Umgebungsvariablen:
 | `ALSO_CLOUDPW` | `••••••••` | ja |
 | `ALSO_CLOUD_TIMEOUT_MS` | `30000` | nein |
 | `ALSO_CLOUD_API_PREFIX` | `/SimpleAPI/.../rest` | nein |
-| `ALSO_CLOUD_PARENT_ACCOUNT_ID` | `315818` | nein (Default-Parent; ohne Wert wird der eigene Account automatisch erkannt, siehe `get_my_account`) |
+| `ALSO_CLOUD_PARENT_ACCOUNT_ID` | `123456` | nein (Default-Parent; ohne Wert wird der eigene Account automatisch erkannt, siehe `get_my_account`) |
 
 `ALSO_CLOUD_MARKETPLACE` akzeptiert eine **volle URL** oder einen **Country-Key**:  
 `Switzerland`, `Germany`, `Austria`, `Debug`, …
@@ -240,6 +240,8 @@ Nach der Anbindung kannst du natürlichsprachlich fragen:
 
 Discovery aller API-Endpoints: Tool `list_api_endpoints`.
 
+Fehler von ALSO werden lesbar zurückgegeben (Grund aus dem WCF-Fault, bei allgemeinen 500ern das **ALSO-Support-Token** für ein Ticket).
+
 ---
 
 ## Tools (Überblick)
@@ -261,7 +263,10 @@ Discovery aller API-Endpoints: Tool `list_api_endpoints`.
 | `list_marketplaces` | Country-Keys → Base-URLs (ohne Login) |
 | `list_api_endpoints` | Katalog der Simple-API |
 | `validate_session` / `clear_session` | Session prüfen / verwerfen |
-| `api_request` | Escape Hatch (u. a. destruktive Endpoints) |
+| ⚠️ RI / Savings Plan | Bestellen/Validieren über die Simple API **nicht möglich** (ALSO: «SimpleApi doesn't support services with remote pricing fields») → Webportal. `get_remote_enums` liefert SKU, Preise und Empfehlungen zur Vorbereitung. |
+| `get_remote_enums` | Auswahlwerte für Felder mit leerer Liste (SKU, Region, ProductSegment …), kaskadierend über `contextValues` (Catalogue → Segment → Product → Region → SKU inkl. Monatspreis). Bei RI/Savings Plan wird automatisch die Azure-Plan-Subscription als Parent und der Tenant als Dependency verwendet |
+| `api_read` | Read-only Escape Hatch für `Get*`/`List*`-Endpoints ohne eigenes Tool (z. B. `GetRemoteEnums`) |
+| `api_request` | Escape Hatch für Schreib-/destruktive Endpoints |
 
 ### Lesen
 | Bereich | Tools |
@@ -276,7 +281,7 @@ Discovery aller API-Endpoints: Tool `list_api_endpoints`.
 | Bereich | Tools |
 |---------|--------|
 | Accounts | `create_*` / `update_*` für Company, Reseller, Department, User |
-| Subscriptions | `get_fields_for_service`, `validate_subscription_fields`, `create_subscription`, `update_subscription` |
+| Subscriptions | `get_fields_for_service`, `validate_subscription_fields`, `create_subscription` (beide prüfen Pflichtfelder, Muster, Bereiche und Enums lokal vor dem ALSO-Aufruf), `update_subscription` |
 | Actions | `get_account_custom_actions`, `execute_account_custom_action`, `retry_last_failed_provisioning` |
 | Upgrade / Renew | `get_possible_services_for_upgrade`, `get_subscription_fields_for_*`, `execute_subscription_upgrade`, `configure_subscription_renew`, `reset_default_renew_values` |
 | Credit / Deal | `set_credit_limit`, `list_credit_check_orders_for_approval`, `approve_*` / `decline_credit_check_order`, `set_special_deal` |

@@ -18,12 +18,13 @@ export function tryParseJson(raw: string): unknown {
   }
 }
 
-export async function alsoPost(endpoint: string, body: unknown = {}) {
+export async function alsoPost(endpoint: string, body: unknown = {}, timeoutMs?: number) {
   const client = getSharedClient();
   const result = await client.request({
     method: 'POST',
     endpoint,
     body: body ?? {},
+    timeoutMs,
   });
   return {
     status: result.status,

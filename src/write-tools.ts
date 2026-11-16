@@ -1,9 +1,12 @@
 import type { McpServer } from '@modelcontextprotocol/server';
 import * as z from 'zod/v4';
+import { precheckSubscription } from './subscription-precheck.js';
 import {
+  alsoPost,
   jsonObject,
   READ_ONLY,
   registerAlsoPostTool,
+  textResult,
   WRITE_CREATE,
   WRITE_IRREVERSIBLE,
   WRITE_UPDATE,
@@ -12,42 +15,49 @@ import {
 const accountId = z.number().int().describe('ALSO Cloud Account ID');
 
 /**
- * Field names below are taken from real GetCompany / GetSubscription responses.
- * The Simple API publishes no request schema, so objects stay open (.loose()):
- * any further API field is passed through unchanged.
+ * Request schemas follow MarketplaceSimpleAPI 1.0.0 (SwaggerHub). Objects stay
+ * open (.loose()) so further API fields are passed through unchanged.
  */
-const companyFields = {
-  CompanyName: z.string().optional().describe('Company name'),
-  Email: z.string().optional().describe('Main e-mail address'),
-  Domain: z.string().optional().describe('Primary domain'),
-  City: z.string().optional(),
-  Country: z.string().optional().describe('Country code as returned by get_company'),
-  Currency: z.string().optional().describe('Currency code, e.g. CHF'),
+const companyRoot = {
+  CompanyName: z.string().describe('Company name'),
+  Address: z.string().describe('Street and number'),
+  City: z.string(),
+  Zip: z.string().describe('Postal code'),
+  Email: z.string().describe('Main e-mail address'),
+  Domain: z.array(z.string()).describe('Domains, e.g. ["example.ch"]'),
   VATID: z.string().optional().describe('VAT / UID number'),
   CustomerId: z.string().optional().describe('Own customer number'),
+  ContractId: z.string().optional(),
+  PurchaseOrderNumber: z.string().optional(),
+  ReferenceNumber: z.string().optional(),
+  State: z.string().optional(),
+  ContactPerson: z.string().optional(),
+  ContactPhone: z.string().optional(),
+  TechnicalContact: z.string().optional(),
+  TechnicalEmail: z.string().optional(),
+  Marketplaces: z.array(z.number().int()).optional().describe('Marketplace IDs, e.g. [101]'),
 };
 
 const companyUpdate = z
   .object({
-    AccountId: z.number().int().describe('Account ID of the company to update (required)'),
-    ...companyFields,
+    AccountId: z.number().int().describe('Account ID of the company to update'),
+    ...companyRoot,
   })
   .loose()
   .describe(
-    'Company update: AccountId + only the fields to change. Same field names as get_company returns; other API fields are passed through.',
+    'UpdateCompany payload. Required by ALSO: AccountId, CompanyName, Address, City, Zip, Email, Domain — send current values (from get_company) for fields you do not change.',
   );
 
 const companyCreate = z
   .object({
-    ParentAccountId: z
-      .number()
-      .int()
-      .describe('Parent (reseller) account; see get_my_account'),
-    ...companyFields,
-    CompanyName: z.string().min(1).describe('Company name (required)'),
+    ParentAccountId: z.number().int().describe('Parent (reseller) account; see get_my_account'),
+    Country: z.string().describe('Country name, e.g. "Switzerland"'),
+    ...companyRoot,
+    Marketplaces: z.array(z.number().int()).describe('Marketplace IDs, e.g. [101] (get_owned_marketplaces)'),
+    CreateDefaultAdminUser: z.boolean().optional(),
   })
   .loose()
-  .describe('New company. Field names as get_company returns; other API fields are passed through.');
+  .describe('CreateCompany payload (MarketplaceSimpleAPI CompanyCreateRequest).');
 
 const accountUpdate = (what: string) =>
   z
@@ -59,17 +69,44 @@ const accountUpdate = (what: string) =>
       `${what} update: AccountId + fields to change, field names as returned by the matching get_* tool.`,
     );
 
-const subscriptionField = z
+const userCreate = z
   .object({
-    Name: z.string().describe('Field name as listed in get_subscription(fullDetail=true) Fields'),
-    Value: z.unknown().describe('New value'),
+    ParentAccountId: z.number().int().describe('Company Account ID the user belongs to'),
+    Username: z.string().min(1).describe('Login name, usually the e-mail'),
+    Email: z.string().min(1),
+    FirstName: z.string().min(1),
+    LastName: z.string().min(1),
+  })
+  .loose()
+  .describe('CreateUser payload.');
+
+const userUpdate = z
+  .object({
+    AccountId: z.number().int(),
+    FirstName: z.string().min(1),
+    LastName: z.string().min(1),
+    Email: z.string().optional(),
+  })
+  .loose()
+  .describe('UpdateUser payload (AccountId, FirstName, LastName required).');
+
+/** Name → value map, as CreateSubscription / ValidateFields / upgrade / renew expect. */
+const fieldValueMap = z
+  .record(z.string(), z.unknown())
+  .describe('Field name → value, e.g. {"SKU": "...", "QuantityVcores": 1}. Names from get_fields_for_service.');
+
+const updateField = z
+  .object({
+    name: z.string().describe('Field name, e.g. "QuantityVcores"'),
+    value: z.string().describe('New value as string'),
   })
   .loose();
 
 const creditCheckOrder = z
   .object({
     RequestId: z
-      .union([z.number(), z.string()])
+      .number()
+      .int()
       .describe('RequestId from list_credit_check_orders_for_approval (required)'),
     Comment: z.string().optional().describe('Reason / comment for the decision'),
   })
@@ -77,6 +114,46 @@ const creditCheckOrder = z
   .describe(
     'One entry from list_credit_check_orders_for_approval (RequestId required, Comment recommended); other fields of that entry may be passed as-is.',
   );
+
+const specialDeal = z
+  .object({
+    ChargeStreamId: z.number().int().describe('Charge stream the discount applies to'),
+    ValidUntil: z.string().describe('Month/year, format "MM-YYYY", e.g. "02-2030"'),
+    Comments: z.string().optional(),
+    IsCustomCharge: z.boolean().optional(),
+    LinkToPriceProtection: z.boolean().optional(),
+    DiscountItems: z
+      .array(
+        z
+          .object({
+            PriceableItemId: z.number().int(),
+            Discount: z.number().optional().describe('Discount in percent'),
+            CustomCharge: z.number().optional().describe('Custom price (with IsCustomCharge=true)'),
+          })
+          .loose(),
+      )
+      .optional(),
+  })
+  .loose()
+  .describe('SetSpecialDeal payload (ChargeStreamId and ValidUntil required).');
+
+/**
+ * Products with remote pricing (SKU priced live by Microsoft): ALSO answers
+ * ValidateFields / CreateSubscription with "SimpleApi doesn't support services
+ * with remote pricing fields" — verified live for Azure Reserved Instances.
+ */
+const REMOTE_PRICING_SERVICE_RE = /ReservedInstance|SavingsPlan/i;
+
+/** CreateSubscription / ValidateFields want Fields as name → value object. */
+function normalizeFields(acc: Record<string, unknown>): Record<string, unknown> {
+  if (!Array.isArray(acc.Fields)) return acc;
+  const obj: Record<string, unknown> = {};
+  for (const f of acc.Fields as Array<Record<string, unknown>>) {
+    const n = f.Name ?? f.name;
+    if (n != null) obj[String(n)] = f.Value ?? f.value;
+  }
+  return { ...acc, Fields: obj };
+}
 
 /**
  * Targeted write tools. Destructive ops (TerminateAccount, Delete*) stay on api_request only.
@@ -151,7 +228,7 @@ export function registerWriteTools(server: McpServer): void {
     endpoint: 'CreateUser',
     annotations: WRITE_CREATE,
     inputSchema: z.object({
-      userAccount: jsonObject.describe('UserAccount payload'),
+      userAccount: userCreate,
     }),
   });
 
@@ -161,7 +238,7 @@ export function registerWriteTools(server: McpServer): void {
     endpoint: 'UpdateUser',
     annotations: WRITE_UPDATE,
     inputSchema: z.object({
-      user: accountUpdate('User'),
+      user: userUpdate,
     }),
   });
 
@@ -170,7 +247,7 @@ export function registerWriteTools(server: McpServer): void {
   registerAlsoPostTool(server, 'get_fields_for_service', {
     title: 'Get fields for service',
     description:
-      'GetFieldsForService — field definitions needed before CreateSubscription / ValidateFields.',
+      'GetFieldsForService — field definitions needed before CreateSubscription / ValidateFields. Remote choice lists (e.g. SKU, Region) may come back empty; load their values with get_remote_enums.',
     endpoint: 'GetFieldsForService',
     annotations: READ_ONLY,
     inputSchema: z.object({
@@ -184,27 +261,101 @@ export function registerWriteTools(server: McpServer): void {
     }),
   });
 
-  registerAlsoPostTool(server, 'validate_subscription_fields', {
-    title: 'Validate subscription fields',
-    description:
-      'WRITE-ish: ValidateFields — validates subscriptionAccount before create. Does not provision.',
-    endpoint: 'ValidateFields',
-    annotations: READ_ONLY,
-    inputSchema: z.object({
-      subscriptionAccount: jsonObject.describe('SubscriptionAccount payload to validate'),
-    }),
-  });
+  const subscriptionAccount = z
+    .object({
+      ParentAccountId: z
+        .number()
+        .int()
+        .describe('Parent account: the company, but for Azure Reserved Instances / Savings Plans the customer Azure Plan subscription (precheck tells you the right ID)'),
+      ServiceName: z
+        .string()
+        .min(1)
+        .describe('Technical product name, e.g. "123456_AzureReservedInstanceforAzurePlanMonthlyBilled_12345"'),
+      DependencyAccountId: z
+        .number()
+        .int()
+        .optional()
+        .describe('Dependency subscription, e.g. the Microsoft tenant subscription for Azure / RI products'),
+      Fields: z
+        .union([
+          fieldValueMap,
+          z.array(z.object({ Name: z.string(), Value: z.unknown() }).loose()),
+        ])
+        .describe(
+          'Field name → value OBJECT as ALSO expects, e.g. {"SKU":"…","QuantityVcores":1}. A [{Name,Value}] list is converted automatically. For Azure RIs typically SKU, QuantityVcores, ProductCatalogue, ProductSegment, Product, ReservationName, Ordertype, ScopedSubscriptions (+ Region); values via get_remote_enums.',
+        ),
+      ContractId: z.string().optional(),
+      PurchaseOrderNumber: z.string().optional(),
+      PurchaseOrderCommitment: z.boolean().optional(),
+      QuoteId: z.string().optional(),
+      ScheduledDate: z.string().optional().describe('YYYY-MM-DD'),
+      FieldsToValidate: z
+        .array(z.string())
+        .optional()
+        .describe('ValidateFields only: restrict validation to these field names'),
+    })
+    .loose()
+    .describe('SubscriptionAccount payload; other API fields are passed through.');
 
-  registerAlsoPostTool(server, 'create_subscription', {
-    title: 'Create subscription',
-    description:
-      'WRITE: CreateSubscription. Use get_fields_for_service + validate_subscription_fields first.',
-    endpoint: 'CreateSubscription',
-    annotations: WRITE_IRREVERSIBLE,
-    inputSchema: z.object({
-      subscriptionAccount: jsonObject.describe('SubscriptionAccount payload'),
-    }),
-  });
+  const precheckThenPost = (endpoint: 'ValidateFields' | 'CreateSubscription') =>
+    async ({ subscriptionAccount: acc }: { subscriptionAccount: Record<string, unknown> }) => {
+      try {
+        const service = String(acc.ServiceName ?? acc.serviceName ?? '');
+        if (REMOTE_PRICING_SERVICE_RE.test(service)) {
+          return textResult(
+            {
+              error: `${endpoint} is not possible for ${service} via the ALSO Simple API.`,
+              alsoResponse: "SimpleApi doesn't support services with remote pricing fields (HTTP 500, verified 2026-11-16).",
+              nextStep:
+                'Order / validate Azure Reserved Instances and Savings Plans in the ALSO Cloud Marketplace web portal. Use get_remote_enums to prepare the exact values (Product, SKU incl. price, recommendations) beforehand.',
+            },
+            true,
+          );
+        }
+        const check = await precheckSubscription(acc);
+        if (!check.ok) {
+          return textResult(
+            {
+              error: `Local precheck failed — ${endpoint} was NOT called (ALSO would only answer with a generic HTTP 500).`,
+              ...check,
+            },
+            true,
+          );
+        }
+        const res = await alsoPost(endpoint, { subscriptionAccount: normalizeFields(acc) });
+        return textResult({
+          ...res,
+          ...(check.issues.length ? { warnings: check.issues } : {}),
+          ...(check.skipped ? { precheckSkipped: check.skipped } : {}),
+        });
+      } catch (err) {
+        return textResult(err instanceof Error ? err.message : String(err), true);
+      }
+    };
+
+  server.registerTool(
+    'validate_subscription_fields',
+    {
+      title: 'Validate subscription fields',
+      description:
+        'ValidateFields — validates a subscriptionAccount before create_subscription. Does not provision. First checks the payload locally against get_fields_for_service (mandatory fields, patterns, ranges, enum values) and returns the concrete problems instead of ALSO\'s generic HTTP 500.',
+      annotations: READ_ONLY,
+      inputSchema: z.object({ subscriptionAccount }),
+    },
+    precheckThenPost('ValidateFields'),
+  );
+
+  server.registerTool(
+    'create_subscription',
+    {
+      title: 'Create subscription',
+      description:
+        'WRITE: CreateSubscription — orders/provisions a new service (cost!). Only after explicit user confirmation. Runs the same local field precheck as validate_subscription_fields and refuses to call ALSO if mandatory fields are missing or invalid.',
+      annotations: WRITE_IRREVERSIBLE,
+      inputSchema: z.object({ subscriptionAccount }),
+    },
+    precheckThenPost('CreateSubscription'),
+  );
 
   registerAlsoPostTool(server, 'update_subscription', {
     title: 'Update subscription',
@@ -214,14 +365,17 @@ export function registerWriteTools(server: McpServer): void {
     inputSchema: z.object({
       subscription: z
         .object({
-          AccountId: z.number().int().describe('Subscription Account ID (required)'),
+          AccountId: z.number().int().describe('Subscription Account ID'),
+          ServiceName: z.string().min(1).describe('Technical product name of the subscription (from get_subscription)'),
           Fields: z
-            .array(subscriptionField)
-            .optional()
-            .describe('Only the fields to change, e.g. [{Name:"Quantity", Value:5}]'),
+            .array(updateField)
+            .describe('Only the fields to change as [{name, value}], e.g. [{"name":"QuantityVcores","value":"2"}]'),
+          AdvancePeriodEndAction: z.enum(['Renew', 'Terminate']).optional(),
+          ContractId: z.string().optional(),
+          PurchaseOrderNumber: z.string().optional(),
         })
         .loose()
-        .describe('Subscription update: AccountId + changed Fields; other API fields are passed through.'),
+        .describe('UpdateSubscription payload (AccountId, ServiceName, Fields required).'),
     }),
   });
 
@@ -240,7 +394,13 @@ export function registerWriteTools(server: McpServer): void {
     annotations: WRITE_IRREVERSIBLE,
     inputSchema: z.object({
       action: z.string().min(1).describe('Custom action name'),
-      subscriptionAccount: jsonObject.describe('Subscription account + action field values'),
+      subscriptionAccount: z
+        .object({
+          AccountId: z.number().int().describe('Subscription Account ID'),
+          ServiceName: z.string().min(1).describe('Technical product name of the subscription'),
+          Fields: fieldValueMap.describe('Action field name → value (from get_account_custom_actions)'),
+        })
+        .loose(),
     }),
   });
 
@@ -256,7 +416,7 @@ export function registerWriteTools(server: McpServer): void {
 
   registerAlsoPostTool(server, 'get_possible_services_for_upgrade', {
     title: 'Get possible upgrade services',
-    description: 'GetPossibleServicesForUpgrade — target products a subscription can be upgraded/switched to (e.g. another SKU or term).',
+    description: 'GetPossibleServicesForUpgrade — target PRODUCTS a subscription can be upgraded/switched to. Not an RI exchange: for monthly Reserved Instances the size is in the SKU field and ALSO returns HTTP 500 here; use get_reservation_options.',
     endpoint: 'GetPossibleServicesForUpgrade',
     annotations: READ_ONLY,
     inputSchema: z.object({ accountId }),
@@ -264,7 +424,7 @@ export function registerWriteTools(server: McpServer): void {
 
   registerAlsoPostTool(server, 'get_subscription_fields_for_upgrade', {
     title: 'Get subscription fields for upgrade',
-    description: 'GetSubscriptionFieldsForUpgrade for accountId + targetProductName.',
+    description: 'GetSubscriptionFieldsForUpgrade — fields for an upgrade to targetProductName (from get_possible_services_for_upgrade). Returns HTTP 500 for monthly Reserved Instances (ALSO-side).',
     endpoint: 'GetSubscriptionFieldsForUpgrade',
     annotations: READ_ONLY,
     inputSchema: z.object({
@@ -275,13 +435,13 @@ export function registerWriteTools(server: McpServer): void {
 
   registerAlsoPostTool(server, 'execute_subscription_upgrade', {
     title: 'Execute subscription upgrade',
-    description: 'WRITE: ExecuteSubscriptionUpgrade — switches/upgrades a subscription to targetProductName (also used for RI/Savings Plan changes if offered). Only after explicit user confirmation.',
+    description: 'WRITE: ExecuteSubscriptionUpgrade — switches/upgrades a subscription to targetProductName (product change, not an RI size/SKU exchange). Only after explicit user confirmation.',
     endpoint: 'ExecuteSubscriptionUpgrade',
     annotations: WRITE_IRREVERSIBLE,
     inputSchema: z.object({
       sourceAccountId: z.number().int().describe('Subscription account to upgrade'),
       targetProductName: z.string().min(1),
-      fieldValues: jsonObject.describe('Field name → value pairs for the upgrade'),
+      fieldValues: fieldValueMap,
       targetAccountId: z.number().int().optional(),
       purchaseOrderCommitment: z
         .boolean()
@@ -306,7 +466,7 @@ export function registerWriteTools(server: McpServer): void {
     annotations: WRITE_UPDATE,
     inputSchema: z.object({
       accountId,
-      fieldValues: jsonObject.describe('Field name → value pairs for renew'),
+      fieldValues: fieldValueMap,
     }),
   });
 
@@ -372,7 +532,7 @@ export function registerWriteTools(server: McpServer): void {
     annotations: WRITE_UPDATE,
     inputSchema: z.object({
       accountId,
-      specialDeal: jsonObject.describe('SimpleSpecialDealRequest payload'),
+      specialDeal,
     }),
   });
 }

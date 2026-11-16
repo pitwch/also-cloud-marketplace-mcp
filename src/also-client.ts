@@ -17,6 +17,8 @@ export type ApiRequestOptions = {
   endpoint: string;
   body?: unknown;
   query?: Record<string, string>;
+  /** Overrides ALSO_CLOUD_TIMEOUT_MS for slow endpoints (e.g. large remote enum lists). */
+  timeoutMs?: number;
 };
 
 export function loadConfigFromEnv(): AlsoConfig {
@@ -47,6 +49,46 @@ export function loadConfigFromEnv(): AlsoConfig {
     apiPrefix: process.env.ALSO_CLOUD_API_PREFIX || DEFAULT_API_PREFIX,
     timeoutMs: timeoutRaw ? Number(timeoutRaw) : 30_000,
   };
+}
+
+function decodeXml(s: string): string {
+  return s
+    .replace(/&#xD;|&#13;/gi, '')
+    .replace(/&#xA;|&#10;/gi, ' ')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, '&');
+}
+
+/**
+ * Turn ALSO/WCF error bodies (XML <Fault> or JSON) into one readable line:
+ * "API error (HTTP 500) on ValidateFields: <reason> [ALSO support token: …]".
+ */
+export function formatApiError(status: number, endpoint: string, body: string): string {
+  let reason = '';
+  const xmlText = body.match(/<(?:\w+:)?Text[^>]*>([\s\S]*?)<\/(?:\w+:)?Text>/);
+  if (xmlText) reason = decodeXml(xmlText[1]!);
+  if (!reason) {
+    try {
+      const j = JSON.parse(body) as Record<string, unknown>;
+      const m = j.Message ?? j.message ?? j.ExceptionMessage ?? j.error;
+      if (typeof m === 'string') reason = m;
+    } catch {
+      // not JSON
+    }
+  }
+  if (!reason) reason = body.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 500);
+  reason = reason.replace(/\s+/g, ' ').trim();
+  const token = reason.match(/token as reference:\s*([0-9a-f-]{36})/i)?.[1];
+  const generic = /something went wrong/i.test(reason);
+  let msg = `API error (HTTP ${status}) on ${endpoint}: `;
+  msg += generic
+    ? 'ALSO returned a generic server error without details (often caused by missing/invalid input fields).'
+    : reason;
+  if (token) msg += ` [ALSO support token: ${token}]`;
+  return msg;
 }
 
 export class AlsoCloudClient {
@@ -131,11 +173,12 @@ export class AlsoCloudClient {
       body,
       query: options.query,
       auth: true,
+      timeoutMs: options.timeoutMs,
     });
 
     const text = await res.text();
     if (res.status < 200 || res.status >= 300) {
-      throw new Error(`API error (HTTP ${res.status}): ${text}`);
+      throw new Error(formatApiError(res.status, options.endpoint, text));
     }
 
     const responseHeaders: Record<string, string> = {};
@@ -154,6 +197,7 @@ export class AlsoCloudClient {
       body?: string;
       query?: Record<string, string>;
       auth: boolean;
+      timeoutMs?: number;
     },
   ): Promise<Response> {
     const url = new URL(endpoint.replace(/^\//, ''), this.baseUrl);
@@ -164,7 +208,8 @@ export class AlsoCloudClient {
     }
 
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    const timeoutMs = init.timeoutMs ?? this.timeoutMs;
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
       return await fetch(url, {
         method: init.method,
@@ -172,6 +217,11 @@ export class AlsoCloudClient {
         body: init.body,
         signal: controller.signal,
       });
+    } catch (err) {
+      if (controller.signal.aborted) {
+        throw new Error(`Timeout after ${timeoutMs} ms on ${endpoint} (ALSO did not answer in time).`);
+      }
+      throw err;
     } finally {
       clearTimeout(timer);
     }

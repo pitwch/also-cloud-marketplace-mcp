@@ -193,7 +193,20 @@ async function reservationOptions(sub: Record<string, unknown>) {
   const changeActions = customActions.filter((a) =>
     CHANGE_ACTION_RE.test(`${a.action ?? ''} ${a.displayName ?? ''}`),
   );
+  const fields = rec(sub.fields) ?? {};
+  const currentSku = pick(fields, ['SKU', 'Sku']);
+  const upgradeHttp500 = /HTTP 5\d\d/.test(errors.upgradeTargets ?? '');
   const nextStep: string[] = [];
+  if (upgradeHttp500) {
+    nextStep.push(
+      'GetPossibleServicesForUpgrade fails with HTTP 5xx for this reservation (known ALSO behaviour for monthly-billed RIs). The upgrade path is not usable here; keep the error token from errors.upgradeTargets for an ALSO support ticket.',
+    );
+  }
+  if (currentSku != null) {
+    nextStep.push(
+      `The reservation size is stored in the SKU field (current: ${String(currentSku)}), not in the product name. An upgrade to another product is therefore NOT an exchange of size/SKU.`,
+    );
+  }
   if (changeActions.length) {
     nextStep.push(
       `Custom action(s) ${changeActions.map((a) => `"${a.action}"`).join(', ')} available → execute_account_custom_action(action, subscriptionAccount={AccountId:${accountId}, Fields:[…]}) after user confirmation.`,
@@ -209,14 +222,17 @@ async function reservationOptions(sub: Record<string, unknown>) {
       `Renewal terms can be changed for the end of term → configure_subscription_renew(accountId=${accountId}, fieldValues).`,
     );
   }
-  if (!changeActions.length && !upgradeTargets.length) {
+  const apiExchangeAvailable = changeActions.length > 0;
+  if (!apiExchangeAvailable) {
     nextStep.push(
-      'No exchange/modify operation is exposed by the ALSO Simple API for this subscription. Exchanges (Tausch) of Reserved Instances / Savings Plans must be done in the ALSO Cloud Marketplace web portal.',
+      'No exchange (Tausch) operation is exposed by the ALSO Simple API for this subscription (no matching custom action). Exchanges of Reserved Instances / Savings Plans must be done in the ALSO Cloud Marketplace web portal. New RIs / Savings Plans cannot be ordered via the Simple API either ("SimpleApi does not support services with remote pricing fields"); get_remote_enums can prepare SKU, price and recommendations for the portal order.',
     );
   }
 
   return {
     subscription: sub,
+    currentSku: currentSku ?? null,
+    apiExchangeAvailable,
     customActions,
     upgradeTargets,
     renewFields,

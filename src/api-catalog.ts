@@ -49,19 +49,19 @@ export const API_CATALOG: ApiEndpointInfo[] = [
   { endpoint: 'GetSubscription', tag: 'Subscription', summary: 'Gets subscription by Account ID.', tool: 'get_subscription' },
   { endpoint: 'GetSubscriptions', tag: 'Subscription', summary: 'Lists subscriptions under Account ID.', tool: 'get_subscriptions' },
   { endpoint: 'GetSubscriptionWithAddons', tag: 'Subscription', summary: 'Gets subscription with addons.', tool: 'get_subscription_with_addons' },
-  { endpoint: 'GetSubscriptionDependencies', tag: 'Subscription', summary: 'Gets subscription dependency accounts.' },
+  { endpoint: 'GetSubscriptionDependencies', tag: 'Subscription', summary: 'Gets subscription dependency accounts.', tool: 'api_read' },
 
   // Subscription management
   { endpoint: 'GetPossibleServicesForParent', tag: 'Subscription management', summary: 'Services a parent can subscribe to.', tool: 'get_possible_services_for_parent' },
   { endpoint: 'GetFieldsForService', tag: 'Subscription management', summary: 'Fields for subscription creation.', tool: 'get_fields_for_service' },
   { endpoint: 'ValidateFields', tag: 'Subscription management', summary: 'Validates a subscription.', tool: 'validate_subscription_fields', risk: 'write' },
-  { endpoint: 'GetRemoteEnums', tag: 'Subscription management', summary: 'Remote enum values for a field.' },
+  { endpoint: 'GetRemoteEnums', tag: 'Subscription management', summary: 'Remote enum values for a field (e.g. SKU, Region).', tool: 'get_remote_enums' },
   { endpoint: 'CreateSubscription', tag: 'Subscription management', summary: 'Creates a subscription.', tool: 'create_subscription', risk: 'write' },
   { endpoint: 'UpdateSubscription', tag: 'Subscription management', summary: 'Updates a service subscription.', tool: 'update_subscription', risk: 'write' },
 
   // Subscription actions
   { endpoint: 'GetAccountCustomActionsWithFields', tag: 'Subscription actions', summary: 'Custom action list for a subscription (RI/SP: see get_reservation_options).', tool: 'get_account_custom_actions' },
-  { endpoint: 'GetRemoteEnumValuesForCustomAction', tag: 'Subscription actions', summary: 'Remote enums for custom action fields.' },
+  { endpoint: 'GetRemoteEnumValuesForCustomAction', tag: 'Subscription actions', summary: 'Remote enums for custom action fields.', tool: 'api_read' },
   { endpoint: 'ExecuteAccountCustomAction', tag: 'Subscription actions', summary: 'Executes a custom action.', tool: 'execute_account_custom_action', risk: 'write' },
   { endpoint: 'RetryLastFailedProvisioning', tag: 'Subscription actions', summary: 'Retries last failed provisioning.', tool: 'retry_last_failed_provisioning', risk: 'write' },
 
@@ -79,7 +79,7 @@ export const API_CATALOG: ApiEndpointInfo[] = [
   { endpoint: 'GetLatestInvoicesForPeriod', tag: 'Reports and Invoices', summary: 'Invoices for year/month.', tool: 'get_latest_invoices_for_period' },
   { endpoint: 'GetPreviewInvoices', tag: 'Reports and Invoices', summary: 'Preview invoices for current open month.', tool: 'get_preview_invoices' },
   { endpoint: 'GetInvoiceAggregationReport', tag: 'Reports and Invoices', summary: 'Invoice aggregation lines for a period.', tool: 'get_invoice_aggregation_report' },
-  { endpoint: 'GetAllProductAccountsWithFieldsReport', tag: 'Reports and Invoices', summary: 'Product accounts and fields report.' },
+  { endpoint: 'GetAllProductAccountsWithFieldsReport', tag: 'Reports and Invoices', summary: 'Product accounts and fields report.', tool: 'api_read' },
 
   // Marketplaces / services
   { endpoint: 'GetMarketplaces', tag: 'Marketplaces', summary: 'Company-owned marketplaces.', tool: 'get_owned_marketplaces' },
@@ -88,13 +88,13 @@ export const API_CATALOG: ApiEndpointInfo[] = [
   { endpoint: 'ListMarketplaceServices', tag: 'Marketplace services', summary: 'Lists services for a marketplace.', tool: 'list_marketplace_services' },
   { endpoint: 'GetAvailableServicesForMarketplace', tag: 'Marketplace services', summary: 'Available services for a marketplace.', tool: 'get_available_services_for_marketplace' },
   { endpoint: 'GetServiceInformation', tag: 'Marketplace services', summary: 'Service info by service name.', tool: 'get_service_information' },
-  { endpoint: 'GetSpecialProductTermsForService', tag: 'Marketplace services', summary: 'Terms and related products for a service.' },
+  { endpoint: 'GetSpecialProductTermsForService', tag: 'Marketplace services', summary: 'Terms and related products for a service.', tool: 'api_read' },
   { endpoint: 'AcceptTermsForMarketplaceService', tag: 'Marketplace services', summary: 'Accept T&Cs for marketplace service.', risk: 'write' },
   { endpoint: 'AddMarketplaceServices', tag: 'Marketplace services', summary: 'Add services to marketplace.', risk: 'write' },
   { endpoint: 'UpdateMarketplaceServices', tag: 'Marketplace services', summary: 'Update marketplace services.', risk: 'write' },
   { endpoint: 'DeleteMarketplaceServices', tag: 'Marketplace services', summary: 'Remove services from marketplace.', risk: 'destructive' },
   { endpoint: 'DeleteMarketplaceService', tag: 'Marketplace services', summary: 'Remove one service from marketplace.', risk: 'destructive' },
-  { endpoint: 'GetMarketplaceServiceCharges', tag: 'Marketplace price management', summary: 'Gets marketplace service charges.' },
+  { endpoint: 'GetMarketplaceServiceCharges', tag: 'Marketplace price management', summary: 'Gets marketplace service charges.', tool: 'api_read' },
   { endpoint: 'UpdateMarketplaceServiceCharges', tag: 'Marketplace price management', summary: 'Updates marketplace service charges.', risk: 'write' },
 
   // Security / Special Deal / Upgrade / Renew
