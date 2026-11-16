@@ -104,7 +104,7 @@ export function createServer(): McpServer {
   const server = new McpServer(
     {
       name: 'also-cloud-marketplace',
-      version: '0.4.0',
+      version: '0.4.1',
     },
     { instructions: SERVER_INSTRUCTIONS },
   );
@@ -116,7 +116,7 @@ export function createServer(): McpServer {
     {
       title: 'List country marketplace URLs',
       description:
-        'Static country keys → marketplace base URLs (Switzerland, Germany, Debug, …). No credentials required. For API-owned marketplaces use get_owned_marketplaces.',
+        'Static list of ALSO country keys and their base URLs (Switzerland, Germany, Debug, …). Local data, no API call, no credentials required.',
       annotations: LOCAL_READ_ONLY,
       inputSchema: z.object({}),
     },

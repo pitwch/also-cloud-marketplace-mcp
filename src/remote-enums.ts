@@ -230,7 +230,7 @@ export function registerRemoteEnumTools(server: McpServer): void {
         serviceName: z
           .string()
           .min(1)
-          .describe('Technical product name, e.g. "123456_AzureReservedInstanceforAzurePlanMonthlyBilled_12345" ("Product_" prefix optional)'),
+          .describe('Technical product name, exactly as returned by get_possible_services_for_parent (ProductName); "Product_" prefix optional'),
         parentAccountId: z
           .number()
           .int()
