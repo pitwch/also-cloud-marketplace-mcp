@@ -114,7 +114,7 @@ export function createServer(): McpServer {
   server.registerTool(
     'list_marketplaces',
     {
-      title: 'List country marketplace URLs',
+      title: 'ALSO country base URLs',
       description:
         'Static list of ALSO country keys and their base URLs (Switzerland, Germany, Debug, …). Local data, no API call, no credentials required.',
       annotations: LOCAL_READ_ONLY,
