@@ -159,21 +159,40 @@ function compactValue(v: unknown) {
   const saved = hint.match(/Percentage Saved\*\*:\s*([\d.,]+%)/)?.[1];
   const suggestedQty = String(r.DisplayName ?? '').match(/Suggested Quantity:\s*(\d+)/)?.[1];
   const monthly = String(r.DisplayName ?? '').match(/Monthly payment per unit:\s*([\d.,]+)/)?.[1];
+  const savedNum = saved ? Number(saved.replace('%', '').replace(',', '')) : undefined;
   return {
     value: r.Value,
     ...(r.DisplayName != null && r.DisplayName !== r.Value ? { displayName: r.DisplayName } : {}),
     ...(!d && hint && hint !== r.Value && hint !== r.DisplayName && !/\*\*Title\*\*/.test(hint) ? { hint } : {}),
-    ...(monthly ? { monthlyPerUnit: Number(monthly.replace(',', '')) } : {}),
+    ...(monthly
+      ? {
+          // "Monthly payment per unit" in the ALSO list = SalesPrice of the resulting
+          // subscription (verified: B2s_v2 3Y 25.61 = SalesPrice, PurchasePrice 24.82).
+          // ALSO does not expose the purchase price per SKU before ordering.
+          salesPricePerUnitMonthly: Number(monthly.replace(',', '')),
+          purchasePricePerUnitMonthly: null,
+        }
+      : {}),
     ...(suggestedQty ? { suggestedQuantity: Number(suggestedQty) } : {}),
-    ...(saved ? { percentageSaved: saved } : {}),
+    ...(saved
+      ? {
+          savingsAsReportedByAlso: saved,
+          ...(savedNum != null && savedNum > 100
+            ? {
+                savingsWarning:
+                  'Implausible: savings above 100 % are impossible. ALSO passes this value through unchecked (likely an amount, not a percentage). Do not quote it as a percentage.',
+              }
+            : {}),
+        }
+      : {}),
     ...(d
       ? {
           tags: d.Tags,
           stablePrice: d.StaticRate,
           prices: {
-            endCustomer: money(d.EndCustomerPrice),
-            reseller: money(d.ResellerPrice),
-            cost: money(d.CostPrice),
+            purchase: money(d.CostPrice) ?? null,
+            sales: money(d.EndCustomerPrice) ?? null,
+            ...(d.ResellerPrice ? { resellerList: money(d.ResellerPrice) } : {}),
           },
         }
       : {}),
@@ -205,7 +224,7 @@ export function registerRemoteEnumTools(server: McpServer): void {
     {
       title: 'Get remote choice values for a field',
       description:
-        'GetRemoteEnums — allowed values of a choice field whose list is empty in get_fields_for_service (e.g. ProductCatalogue → ProductSegment → Product → Region → SKU, Ordertype, ScopedSubscriptions for Azure Reserved Instances). Lists are cascading: pass the values chosen so far in contextValues. With Ordertype="Recommended" the SKU list contains Microsoft usage-based suggestions (suggestedQuantity, percentageSaved); Lookbackperioddays = "7 days" | "30 days" (default) | "60 days". SKU entries include monthly price and endCustomer / reseller / cost prices. Pass the company Account ID: for RI / Savings Plan products the Azure Plan subscription is used as parent automatically, and the Microsoft tenant subscription + tenant ID are added. Read-only.',
+        'GetRemoteEnums — allowed values of a choice field whose list is empty in get_fields_for_service (e.g. ProductCatalogue → ProductSegment → Product → Region → SKU, Ordertype, ScopedSubscriptions for Azure Reserved Instances). Lists are cascading: pass the values chosen so far in contextValues. With Ordertype="Recommended" the SKU list contains Microsoft usage-based suggestions (suggestedQuantity, savingsAsReportedByAlso: ALSO value, flagged when implausible); Lookbackperioddays = "7 days" | "30 days" (default) | "60 days". SKU entries include salesPricePerUnitMonthly (Verkaufspreis); the purchase price (Einkaufspreis) is only filled when ALSO sends it (prices.purchase), otherwise null. Pass the company Account ID: for RI / Savings Plan products the Azure Plan subscription is used as parent automatically, and the Microsoft tenant subscription + tenant ID are added. Read-only.',
       annotations: READ_ONLY,
       inputSchema: z.object({
         serviceName: z

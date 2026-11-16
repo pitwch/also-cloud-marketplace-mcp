@@ -137,13 +137,6 @@ const specialDeal = z
   .loose()
   .describe('SetSpecialDeal payload (ChargeStreamId and ValidUntil required).');
 
-/**
- * Products with remote pricing (SKU priced live by Microsoft): ALSO answers
- * ValidateFields / CreateSubscription with "SimpleApi doesn't support services
- * with remote pricing fields" — verified live for Azure Reserved Instances.
- */
-const REMOTE_PRICING_SERVICE_RE = /ReservedInstance|SavingsPlan/i;
-
 /** CreateSubscription / ValidateFields want Fields as name → value object. */
 function normalizeFields(acc: Record<string, unknown>): Record<string, unknown> {
   if (!Array.isArray(acc.Fields)) return acc;
@@ -300,18 +293,6 @@ export function registerWriteTools(server: McpServer): void {
   const precheckThenPost = (endpoint: 'ValidateFields' | 'CreateSubscription') =>
     async ({ subscriptionAccount: acc }: { subscriptionAccount: Record<string, unknown> }) => {
       try {
-        const service = String(acc.ServiceName ?? acc.serviceName ?? '');
-        if (REMOTE_PRICING_SERVICE_RE.test(service)) {
-          return textResult(
-            {
-              error: `${endpoint} is not possible for ${service} via the ALSO Simple API.`,
-              alsoResponse: "SimpleApi doesn't support services with remote pricing fields (HTTP 500, verified 2026-11-16).",
-              nextStep:
-                'Order / validate Azure Reserved Instances and Savings Plans in the ALSO Cloud Marketplace web portal. Use get_remote_enums to prepare the exact values (Product, SKU incl. price, recommendations) beforehand.',
-            },
-            true,
-          );
-        }
         const check = await precheckSubscription(acc);
         if (!check.ok) {
           return textResult(

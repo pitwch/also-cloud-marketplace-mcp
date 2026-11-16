@@ -20,7 +20,7 @@ ALWAYS:
 6) Reports → get_reports for valid names, then execute_report with an exact name.
 7) get_subscriptions / get_subscription return COMPACT summaries by default. Only pass fullDetail=true if the user explicitly needs raw Fields.
 
-Azure Reserved Instances / Savings Plans can NOT be ordered or validated via the Simple API (remote pricing, ALSO answers HTTP 500) — orders happen in the web portal. get_remote_enums still lists Product / SKU / price / recommendations to prepare them. They live UNDER the customer's Azure Plan subscription (ParentAccountId) with the Microsoft tenant subscription as DependencyAccountId; get_remote_enums and the create/validate precheck resolve both from the company ID.
+Azure Reserved Instances / Savings Plans: fill every remote field (ProductCatalogue, ProductSegment, Ordertype, Product, Region, SKU, ScopedSubscriptions) via get_remote_enums, then validate_subscription_fields, then create_subscription only after user confirmation. They live UNDER the customer's Azure Plan subscription (ParentAccountId) with the Microsoft tenant subscription as DependencyAccountId; get_remote_enums and the create/validate precheck resolve both from the company ID.
 
 Subscription payloads: Fields is a name → value OBJECT for create/validate/upgrade/renew, but a [{name, value}] list for update_subscription.
 

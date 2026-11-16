@@ -27,6 +27,7 @@ import {
 import { registerRemoteEnumTools } from './remote-enums.js';
 import { registerWorkflowTools } from './workflow-tools.js';
 import { registerWriteTools } from './write-tools.js';
+import { withAzurePlanAddons } from './azure-addons.js';
 
 const accountId = z.number().int().describe('ALSO Cloud Account ID');
 const parentAccountId = z
@@ -405,7 +406,11 @@ export function createServer(): McpServer {
           status: res.status,
           body: fullDetail
             ? redactSecrets(res.body)
-            : summarizeSubscriptions(res.body, Boolean(activeOnly)),
+            : await withAzurePlanAddons(
+                res.body,
+                summarizeSubscriptions(res.body, Boolean(activeOnly)),
+                Boolean(activeOnly),
+              ),
         });
       } catch (err) {
         return textResult(err instanceof Error ? err.message : String(err), true);

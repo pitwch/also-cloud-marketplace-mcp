@@ -2,6 +2,7 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import * as z from 'zod/v4';
 import { PARENT_HELP, resolveParentAccountId } from './account-context.js';
 import { alsoPost, READ_ONLY, textResult } from './tools-helpers.js';
+import { withAzurePlanAddons } from './azure-addons.js';
 import {
   DUPLICATE_HINT,
   filterCompaniesByName,
@@ -225,7 +226,7 @@ async function reservationOptions(sub: Record<string, unknown>) {
   const apiExchangeAvailable = changeActions.length > 0;
   if (!apiExchangeAvailable) {
     nextStep.push(
-      'No exchange (Tausch) operation is exposed by the ALSO Simple API for this subscription (no matching custom action). Exchanges of Reserved Instances / Savings Plans must be done in the ALSO Cloud Marketplace web portal. New RIs / Savings Plans cannot be ordered via the Simple API either ("SimpleApi does not support services with remote pricing fields"); get_remote_enums can prepare SKU, price and recommendations for the portal order.',
+      'No exchange (Tausch) operation is exposed by the ALSO Simple API for this subscription (no matching custom action). Exchanges of Reserved Instances / Savings Plans must be done in the ALSO Cloud Marketplace web portal. New RIs / Savings Plans: get_remote_enums → validate_subscription_fields → create_subscription.',
     );
   }
 
@@ -289,7 +290,7 @@ export function registerWorkflowTools(server: McpServer): void {
     {
       title: 'List company subscriptions (compact)',
       description:
-        'PREFERRED for "which subscriptions/licences does company X have?". Resolves the company by accountId or name, then GetSubscriptions. Compact summary (no huge Fields arrays). activeOnly=true (default) returns active services only. Not for: cross-customer Azure overview (use list_azure_subscriptions).',
+        'PREFERRED for "which subscriptions/licences does company X have?". Resolves the company by accountId or name, then GetSubscriptions. Compact summary (no huge Fields arrays). Azure Reserved Instances / Savings Plans (addons of the Azure Plan subscription, field addonOf) are included. activeOnly=true (default) returns active services only; activeOnly=false also lists terminated ones. Not for: cross-customer Azure overview (use list_azure_subscriptions).',
       inputSchema: z.object({
         accountId: z.number().int().optional().describe('Company Account ID if already known'),
         companyName: z
@@ -316,7 +317,11 @@ export function registerWorkflowTools(server: McpServer): void {
         if (excludeUserLevel !== undefined) body.excludeUserLevel = excludeUserLevel;
 
         const subs = await alsoPost('GetSubscriptions', body);
-        const subscriptions = summarizeSubscriptions(subs.body, activeOnly);
+        const subscriptions = await withAzurePlanAddons(
+          subs.body,
+          summarizeSubscriptions(subs.body, activeOnly),
+          activeOnly,
+        );
 
         return textResult({
           company: resolved.company,
@@ -370,7 +375,11 @@ export function registerWorkflowTools(server: McpServer): void {
           }
           try {
             const subs = await alsoPost('GetSubscriptions', { parentAccountId: id });
-            const all = summarizeSubscriptions(subs.body, activeOnly);
+            const all = await withAzurePlanAddons(
+              subs.body,
+              summarizeSubscriptions(subs.body, activeOnly),
+              activeOnly,
+            );
             return { company: co, subscriptions: all.filter(isAzureRelatedSubscription) };
           } catch (err) {
             return { company: co, subscriptions: [] as unknown[], error: errMsg(err) };
@@ -459,7 +468,9 @@ export function registerWorkflowTools(server: McpServer): void {
           const res = await alsoPost('GetSubscriptions', {
             parentAccountId: resolved.companyAccountId,
           });
-          subs = summarizeSubscriptions(res.body, true).filter(
+          subs = (
+            await withAzurePlanAddons(res.body, summarizeSubscriptions(res.body, true), true)
+          ).filter(
             isReservationSubscription,
           ) as Record<string, unknown>[];
           if (subs.length === 0) {
