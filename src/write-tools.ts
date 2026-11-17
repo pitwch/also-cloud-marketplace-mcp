@@ -275,7 +275,7 @@ export function registerWriteTools(server: McpServer): void {
           z.array(z.object({ Name: z.string(), Value: z.unknown() }).loose()),
         ])
         .describe(
-          'Field name → value OBJECT as ALSO expects, e.g. {"SKU":"…","QuantityVcores":1}. A [{Name,Value}] list is converted automatically. For Azure RIs typically SKU, QuantityVcores, ProductCatalogue, ProductSegment, Product, ReservationName, Ordertype, ScopedSubscriptions (+ Region); values via get_remote_enums.',
+          'Field name → value OBJECT as ALSO expects, e.g. {"Quantity":5}. A [{Name,Value}] list is converted automatically. Field names and allowed values via get_fields_for_service.',
         ),
       ContractId: z.string().optional(),
       PurchaseOrderNumber: z.string().optional(),
@@ -294,6 +294,22 @@ export function registerWriteTools(server: McpServer): void {
     async ({ subscriptionAccount: acc }: { subscriptionAccount: Record<string, unknown> }) => {
       try {
         const check = await precheckSubscription(acc);
+        if (check.remotePricingFields) {
+          return textResult(
+            {
+              error: `${endpoint} was NOT called: ${check.serviceName} cannot be validated or ordered via the ALSO Simple API.`,
+              reason:
+                "The service has remote pricing fields (live vendor price list" +
+                (check.remotePricingFields.length ? `: ${check.remotePricingFields.join(', ')}` : '') +
+                "). ALSO rejects ValidateFields and CreateSubscription for such services with HTTP 500 \"SimpleApi doesn't support services with remote pricing fields\" (no support token).",
+              nextStep:
+                'Use order_azure_reservation with the same values (dry run first, confirmOrder=true only after explicit user confirmation). Field values via get_remote_enums.',
+              serviceName: check.serviceName,
+              parentAccountId: check.parentAccountId,
+            },
+            true,
+          );
+        }
         if (!check.ok) {
           return textResult(
             {
@@ -319,7 +335,7 @@ export function registerWriteTools(server: McpServer): void {
     {
       title: 'Validate subscription fields',
       description:
-        'ValidateFields — validates a subscriptionAccount before create_subscription. Does not provision. First checks the payload locally against get_fields_for_service (mandatory fields, patterns, ranges, enum values) and returns the concrete problems instead of ALSO\'s generic HTTP 500.',
+        'ValidateFields — validates a subscriptionAccount before create_subscription. Does not provision. First checks the payload locally against get_fields_for_service (mandatory fields, patterns, ranges, enum values) and returns the concrete problems instead of ALSO\'s generic HTTP 500. Not for: Azure Reserved Instances / Savings Plans (remote pricing, not supported by the Simple API): use order_azure_reservation.',
       annotations: READ_ONLY,
       inputSchema: z.object({ subscriptionAccount }),
     },
@@ -331,7 +347,7 @@ export function registerWriteTools(server: McpServer): void {
     {
       title: 'Create subscription',
       description:
-        'WRITE: CreateSubscription — orders/provisions a new service (cost!). Only after explicit user confirmation. Runs the same local field precheck as validate_subscription_fields and refuses to call ALSO if mandatory fields are missing or invalid.',
+        'WRITE: CreateSubscription — orders/provisions a new service (cost!). Only after explicit user confirmation. Runs the same local field precheck as validate_subscription_fields and refuses to call ALSO if mandatory fields are missing or invalid. Not for: Azure Reserved Instances / Savings Plans (remote pricing fields, not supported by the Simple API): use order_azure_reservation.',
       annotations: WRITE_IRREVERSIBLE,
       inputSchema: z.object({ subscriptionAccount }),
     },

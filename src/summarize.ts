@@ -110,6 +110,14 @@ export function summarizeCompany(raw: unknown) {
   };
 }
 
+/** Plain-language next step for known vendor provisioning errors. */
+export function provisioningHint(error: string): string | undefined {
+  if (/900428|re-attest/i.test(error)) {
+    return 'Microsoft requires a new Microsoft Customer Agreement attestation. Run the custom action INITIATEMCAATTESTATION on the Microsoft tenant subscription (execute_account_custom_action) or let the customer re-attest in the Microsoft 365 admin center, then retry the failed provisioning in the ALSO portal.';
+  }
+  return undefined;
+}
+
 export function summarizeSubscription(raw: unknown) {
   const s = asRecord(raw);
   if (!s) return raw;
@@ -126,6 +134,13 @@ export function summarizeSubscription(raw: unknown) {
     billingStartDate: s.BillingStartDate ?? null,
     contractEndDate: s.ContractEndDate ?? null,
     provisioningStatus: s.ProvisioningStatus ?? null,
+    ...(s.ScheduledTerminationDate ? { terminationDate: s.ScheduledTerminationDate } : {}),
+    ...(typeof s.ErrorDetails === 'string' && s.ErrorDetails.trim()
+      ? {
+          provisioningError: s.ErrorDetails.replace(/\s+/g, ' ').trim().slice(0, 600),
+          ...(provisioningHint(s.ErrorDetails) ? { provisioningHint: provisioningHint(s.ErrorDetails) } : {}),
+        }
+      : {}),
     fields: Object.keys(fields).length ? fields : undefined,
   };
 }

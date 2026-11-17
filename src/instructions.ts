@@ -20,7 +20,7 @@ ALWAYS:
 6) Reports → get_reports for valid names, then execute_report with an exact name.
 7) get_subscriptions / get_subscription return COMPACT summaries by default. Only pass fullDetail=true if the user explicitly needs raw Fields.
 
-Azure Reserved Instances / Savings Plans: fill every remote field (ProductCatalogue, ProductSegment, Ordertype, Product, Region, SKU, ScopedSubscriptions) via get_remote_enums, then validate_subscription_fields, then create_subscription only after user confirmation. They live UNDER the customer's Azure Plan subscription (ParentAccountId) with the Microsoft tenant subscription as DependencyAccountId; get_remote_enums and the create/validate precheck resolve both from the company ID.
+Azure Reserved Instances / Savings Plans have remote pricing fields; ALSO's Simple API rejects ValidateFields / CreateSubscription for them, so validate_subscription_fields / create_subscription refuse them locally. Order them with order_azure_reservation (ALSO portal API): fill the values via get_remote_enums (ProductCatalogue -> ProductSegment -> Ordertype -> SKU), run order_azure_reservation as dry run (default), show the user SKU, quantity, term and price, and only after explicit confirmation call it again with confirmOrder=true. Check the result later with get_subscription (Microsoft needs up to an hour). They live UNDER the customer's Azure Plan subscription with the Microsoft tenant subscription as dependency; get_remote_enums resolves both from the company ID.
 
 Subscription payloads: Fields is a name → value OBJECT for create/validate/upgrade/renew, but a [{name, value}] list for update_subscription.
 

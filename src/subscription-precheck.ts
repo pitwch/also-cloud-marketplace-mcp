@@ -30,7 +30,8 @@ export type PrecheckIssue = {
     | 'unknown_field'
     | 'not_a_number'
     | 'wrong_parent'
-    | 'missing_dependency';
+    | 'missing_dependency'
+    | 'remote_pricing';
   detail: string;
 };
 
@@ -42,7 +43,47 @@ export type PrecheckResult = {
   /** Compact definitions so the caller can fix the payload in one go. */
   fieldDefinitions?: Array<Record<string, unknown>>;
   skipped?: string;
+  /** Set when ALSO's Simple API cannot order this service at all (portal only). */
+  remotePricingFields?: string[];
 };
+
+/** Fallback when GetFieldsForService is unavailable: the products known to use remote pricing. */
+const REMOTE_PRICING_NAME_RE = /ReservedInstance|SavingsPlan/i;
+
+/**
+ * Remote pricing = a field whose values and price come live from the vendor
+ * (DisplayTemplate "AdvancedList", e.g. the SKU of Azure Reserved Instances and
+ * Savings Plans). ALSO rejects ValidateFields / CreateSubscription for such
+ * services with "SimpleApi doesn't support services with remote pricing fields"
+ * (fault code Sender, no support token). Verified live on 2026-11-16 and 2026-11-17.
+ */
+export function remotePricingFields(defs: FieldDef[]): string[] {
+  return defs
+    .filter((d) => /advancedlist/i.test(String(d.DisplayTemplate ?? '')))
+    .map((d) => String(d.Name ?? d.DisplayName ?? '?'));
+}
+
+/** Escape hatch in case ALSO adds remote pricing support to the Simple API later. */
+function remotePricingAllowed(): boolean {
+  return /^(1|true|yes)$/i.test(process.env.ALSO_CLOUD_ALLOW_REMOTE_PRICING ?? '');
+}
+
+function remotePricingResult(serviceName: string, parent: number, fields: string[]): PrecheckResult {
+  return {
+    ok: false,
+    serviceName,
+    parentAccountId: parent,
+    remotePricingFields: fields,
+    issues: [
+      {
+        field: fields.join(', ') || 'ServiceName',
+        problem: 'remote_pricing',
+        detail:
+          "Service uses remote pricing fields. ALSO's Simple API rejects ValidateFields and CreateSubscription for it (\"SimpleApi doesn't support services with remote pricing fields\").",
+      },
+    ],
+  };
+}
 
 function rec(v: unknown): Record<string, unknown> | null {
   return v !== null && typeof v === 'object' && !Array.isArray(v)
@@ -199,6 +240,9 @@ export async function precheckSubscription(account: Record<string, unknown>): Pr
     const body = rec(res.body);
     defs = Array.isArray(body?.Fields) ? (body!.Fields as FieldDef[]) : [];
   } catch (err) {
+    if (!remotePricingAllowed() && REMOTE_PRICING_NAME_RE.test(serviceName)) {
+      return remotePricingResult(serviceName, parent, []);
+    }
     // Precheck is best-effort: never block the real call because of it.
     return {
       ok: true,
@@ -211,6 +255,9 @@ export async function precheckSubscription(account: Record<string, unknown>): Pr
   if (!defs.length) {
     return { ok: true, serviceName, parentAccountId: parent, issues: [], skipped: 'No field definitions returned.' };
   }
+
+  const remote = remotePricingFields(defs);
+  if (remote.length && !remotePricingAllowed()) return remotePricingResult(serviceName, parent, remote);
 
   const issues = checkFields(defs, givenFields(account));
 

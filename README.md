@@ -30,6 +30,7 @@ Benötigte Umgebungsvariablen:
 | `ALSO_CLOUD_TIMEOUT_MS` | `30000` | nein |
 | `ALSO_CLOUD_API_PREFIX` | `/SimpleAPI/.../rest` | nein |
 | `ALSO_CLOUD_PARENT_ACCOUNT_ID` | `123456` | nein (Default-Parent; ohne Wert wird der eigene Account automatisch erkannt, siehe `get_my_account`) |
+| `ALSO_CLOUD_ALLOW_REMOTE_PRICING` | `false` | nein (nur setzen, falls ALSO RI/Savings-Plan-Bestellungen über die Simple API freischaltet; sonst leiten `validate_subscription_fields`/`create_subscription` zu `order_azure_reservation` um) |
 
 `ALSO_CLOUD_MARKETPLACE` akzeptiert eine **volle URL** oder einen **Country-Key**:  
 `Switzerland`, `Germany`, `Austria`, `Debug`, …
@@ -263,7 +264,7 @@ Fehler von ALSO werden lesbar zurückgegeben (Grund aus dem WCF-Fault, bei allge
 | `list_marketplaces` | Country-Keys → Base-URLs (ohne Login) |
 | `list_api_endpoints` | Katalog der Simple-API |
 | `validate_session` / `clear_session` | Session prüfen / verwerfen |
-| ⚠️ RI / Savings Plan | Bestellen/Validieren über die Simple API **nicht möglich** (ALSO: «SimpleApi doesn't support services with remote pricing fields») → Webportal. `get_remote_enums` liefert SKU, Preise und Empfehlungen zur Vorbereitung. |
+| `order_azure_reservation` | **Bestellt** Azure Reserved Instances / Savings Plans über die (von ALSO nicht dokumentierte) Portal-API, weil die Simple API Produkte mit Remote-Pricing ablehnt («SimpleApi doesn't support services with remote pricing fields»). Standard ist ein Probelauf (Payload bauen, Formularregeln anwenden, ALSO-Validierung); erst `confirmOrder=true` bestellt. Werte vorher mit `get_remote_enums` holen. |
 | `get_remote_enums` | Auswahlwerte für Felder mit leerer Liste (SKU, Region, ProductSegment …), kaskadierend über `contextValues` (Catalogue → Segment → Product → Region → SKU inkl. Monatspreis). Bei RI/Savings Plan wird automatisch die Azure-Plan-Subscription als Parent und der Tenant als Dependency verwendet |
 | `api_read` | Read-only Escape Hatch für `Get*`/`List*`-Endpoints ohne eigenes Tool (z. B. `GetRemoteEnums`) |
 | `api_request` | Escape Hatch für Schreib-/destruktive Endpoints |

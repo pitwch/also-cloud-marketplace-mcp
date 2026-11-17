@@ -1,7 +1,7 @@
 import type { McpServer } from '@modelcontextprotocol/server';
 import * as z from 'zod/v4';
 import { PARENT_HELP, resolveParentAccountId } from './account-context.js';
-import { alsoPost, READ_ONLY, textResult } from './tools-helpers.js';
+import { alsoPost, mapPool, READ_ONLY, textResult } from './tools-helpers.js';
 import { withAzurePlanAddons } from './azure-addons.js';
 import {
   DUPLICATE_HINT,
@@ -21,25 +21,6 @@ const optionalParent = z
   .describe(
     'Parent (reseller) account that owns the end-customer companies. Optional: defaults to ALSO_CLOUD_PARENT_ACCOUNT_ID or the auto-detected own account (get_my_account).',
   );
-
-async function mapPool<T, R>(
-  items: T[],
-  concurrency: number,
-  fn: (item: T) => Promise<R>,
-): Promise<R[]> {
-  const out: R[] = new Array(items.length);
-  let next = 0;
-  async function worker() {
-    for (;;) {
-      const i = next++;
-      if (i >= items.length) return;
-      out[i] = await fn(items[i]!);
-    }
-  }
-  const n = Math.min(concurrency, Math.max(1, items.length));
-  await Promise.all(Array.from({ length: n }, () => worker()));
-  return out;
-}
 
 function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);

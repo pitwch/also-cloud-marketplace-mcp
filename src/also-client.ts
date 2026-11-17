@@ -2,7 +2,9 @@ import { resolveMarketplace } from './marketplaces.js';
 
 const DEFAULT_API_PREFIX = '/SimpleAPI/SimpleAPIService.svc/rest';
 const DEFAULT_LOGIN = 'GetSessionToken';
-const USER_AGENT = 'also-cloud-marketplace-mcp/0.4.1';
+/** Internal REST API of the ALSO web portal (undocumented); accepts the same CCPSessionId. */
+const PORTAL_API_PREFIX = '/DataModel/service.svc/rest';
+const USER_AGENT = 'also-cloud-marketplace-mcp/0.5.0';
 
 export type AlsoConfig = {
   marketplace: string;
@@ -19,6 +21,8 @@ export type ApiRequestOptions = {
   query?: Record<string, string>;
   /** Overrides ALSO_CLOUD_TIMEOUT_MS for slow endpoints (e.g. large remote enum lists). */
   timeoutMs?: number;
+  /** Call the portal API (endpoint like "IAccountService/CreateAccount") instead of the Simple API. */
+  portal?: boolean;
 };
 
 export function loadConfigFromEnv(): AlsoConfig {
@@ -81,24 +85,32 @@ export function formatApiError(status: number, endpoint: string, body: string): 
   }
   if (!reason) reason = body.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 500);
   reason = reason.replace(/\s+/g, ' ').trim();
-  const token = reason.match(/token as reference:\s*([0-9a-f-]{36})/i)?.[1];
+  const token =
+    reason.match(/token as reference:\s*([0-9a-f-]{36})/i)?.[1] ??
+    body.match(/<(?:\w+:)?IssueToken[^>]*>\s*([0-9a-f-]{36})/i)?.[1] ??
+    body.match(/"IssueToken"\s*:\s*"([0-9a-f-]{36})"/i)?.[1];
   const generic = /something went wrong/i.test(reason);
   let msg = `API error (HTTP ${status}) on ${endpoint}: `;
   msg += generic
     ? 'ALSO returned a generic server error without details (often caused by missing/invalid input fields).'
     : reason;
-  if (token) msg += ` [ALSO support token: ${token}]`;
+  // Always give support something to reference: ALSO's token, or else the exact time.
+  msg += token
+    ? ` [ALSO support token: ${token}]`
+    : ` [ALSO sent no support token; time ${new Date().toISOString()}]`;
   return msg;
 }
 
 export class AlsoCloudClient {
   private sessionToken: string | null = null;
   private readonly baseUrl: string;
+  private readonly portalBaseUrl: string;
   private readonly timeoutMs: number;
 
   constructor(private readonly config: AlsoConfig) {
     const prefix = (config.apiPrefix ?? DEFAULT_API_PREFIX).replace(/\/+$/, '');
     this.baseUrl = `${config.marketplace.replace(/\/+$/, '')}${prefix}/`;
+    this.portalBaseUrl = `${config.marketplace.replace(/\/+$/, '')}${PORTAL_API_PREFIX}/`;
     this.timeoutMs = config.timeoutMs ?? 30_000;
   }
 
@@ -174,6 +186,7 @@ export class AlsoCloudClient {
       query: options.query,
       auth: true,
       timeoutMs: options.timeoutMs,
+      portal: options.portal,
     });
 
     const text = await res.text();
@@ -198,9 +211,10 @@ export class AlsoCloudClient {
       query?: Record<string, string>;
       auth: boolean;
       timeoutMs?: number;
+      portal?: boolean;
     },
   ): Promise<Response> {
-    const url = new URL(endpoint.replace(/^\//, ''), this.baseUrl);
+    const url = new URL(endpoint.replace(/^\//, ''), init.portal ? this.portalBaseUrl : this.baseUrl);
     if (init.query) {
       for (const [k, v] of Object.entries(init.query)) {
         url.searchParams.set(k, v);

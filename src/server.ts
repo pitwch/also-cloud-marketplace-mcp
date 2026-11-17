@@ -25,6 +25,7 @@ import {
   WRITE_IRREVERSIBLE,
 } from './tools-helpers.js';
 import { registerRemoteEnumTools } from './remote-enums.js';
+import { registerPortalOrderTools } from './portal-order.js';
 import { registerWorkflowTools } from './workflow-tools.js';
 import { registerWriteTools } from './write-tools.js';
 import { withAzurePlanAddons } from './azure-addons.js';
@@ -104,7 +105,7 @@ export function createServer(): McpServer {
   const server = new McpServer(
     {
       name: 'also-cloud-marketplace',
-      version: '0.4.1',
+      version: '0.5.0',
     },
     { instructions: SERVER_INSTRUCTIONS },
   );
@@ -214,6 +215,15 @@ export function createServer(): McpServer {
           source: resolved.source,
           accountType,
           account,
+          ...(account === null
+            ? {
+                warning:
+                  `Account ${resolved.accountId} is not readable as reseller or company (ALSO: invalid account id). ` +
+                  (resolved.source === 'env'
+                    ? 'Check ALSO_CLOUD_PARENT_ACCOUNT_ID on the server: customer lists (find_companies, list_azure_subscriptions) will be empty with a wrong parent.'
+                    : 'Pass parentAccountId explicitly or set ALSO_CLOUD_PARENT_ACCOUNT_ID.'),
+              }
+            : {}),
         });
       } catch (err) {
         return textResult(err instanceof Error ? err.message : String(err), true);
@@ -396,9 +406,8 @@ export function createServer(): McpServer {
       activeOnly = true,
     }) => {
       try {
-        const body: Record<string, unknown> = {
-          parentAccountId: await requireParentAccountId(parent),
-        };
+        const parentId = await requireParentAccountId(parent);
+        const body: Record<string, unknown> = { parentAccountId: parentId };
         if (rc !== undefined) body.resellerContext = rc;
         if (excludeUserLevel !== undefined) body.excludeUserLevel = excludeUserLevel;
         const res = await alsoPost('GetSubscriptions', body);
@@ -410,6 +419,7 @@ export function createServer(): McpServer {
                 res.body,
                 summarizeSubscriptions(res.body, Boolean(activeOnly)),
                 Boolean(activeOnly),
+                parentId,
               ),
         });
       } catch (err) {
@@ -610,6 +620,7 @@ export function createServer(): McpServer {
   // --- Targeted writes (Create/Update, subscription, credit, upgrade/renew) ---
   registerWriteTools(server);
   registerRemoteEnumTools(server);
+  registerPortalOrderTools(server);
 
   // --- Escape hatch ---
 

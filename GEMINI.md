@@ -7,6 +7,7 @@
 | Company by name | `find_companies` |
 | Subscriptions of one company | `list_company_subscriptions` |
 | All Azure Plan / RI / Savings Plans | `list_azure_subscriptions` |
+| Order a Reserved Instance / Savings Plan | `get_remote_enums` → `order_azure_reservation` (dry run) → user confirms → `confirmOrder=true` |
 | One known subscription accountId | `get_subscription` (compact unless `fullDetail=true`) |
 | Exchange / change a Reserved Instance or Savings Plan | `get_reservation_options` |
 | Own account / default parentAccountId | `get_my_account` |
