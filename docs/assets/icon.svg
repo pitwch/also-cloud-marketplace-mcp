@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-label="MCP Server">
+  <defs>
+    <linearGradient id="mcpGrad" x1="70" y1="120" x2="440" y2="380" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#B8F03A"/>
+      <stop offset="35%" stop-color="#2EC4B6"/>
+      <stop offset="70%" stop-color="#6B7CFF"/>
+      <stop offset="100%" stop-color="#F08A3C"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="512" height="512" rx="96" fill="#0A0A0A"/>
+
+  <text
+    x="256"
+    y="300"
+    text-anchor="middle"
+    fill="url(#mcpGrad)"
+    font-family="Segoe UI, Helvetica Neue, Arial, sans-serif"
+    font-size="156"
+    font-weight="800"
+    letter-spacing="8"
+  >MCP</text>
+
+  <line x1="110" y1="360" x2="402" y2="360" stroke="#333333" stroke-width="5" stroke-linecap="round"/>
+  <circle cx="156" cy="360" r="8" fill="#B8F03A"/>
+  <circle cx="256" cy="360" r="8" fill="#6B7CFF"/>
+  <circle cx="356" cy="360" r="8" fill="#F08A3C"/>
+</svg>

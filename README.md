@@ -1,15 +1,15 @@
 <p align="center">
-  <img src="docs/assets/banner.jpg" alt="ALSO Cloud Marketplace MCP" width="100%" />
+  <img src="docs/assets/banner.png" alt="MCP Server for ALSO Cloud Marketplace" width="100%" />
 </p>
 
 <p align="center">
-  <img src="docs/assets/icon.jpg" alt="ALSO Cloud Marketplace MCP Icon" width="96" height="96" />
+  <img src="docs/assets/icon.png" alt="MCP Server" width="96" height="96" />
 </p>
 
 <h1 align="center">ALSO Cloud Marketplace MCP</h1>
 
 <p align="center">
-  <strong>Model Context Protocol Server</strong> für die ALSO Cloud Marketplace Simple API<br/>
+  <strong>MCP Server for ALSO Cloud Marketplace</strong><br/>
   Companies · Subscriptions · Users · Invoices · Azure RI / Savings Plans
 </p>
 
@@ -371,7 +371,7 @@ MIT License — siehe [`LICENSE`](./LICENSE).
 
 <p align="center">
   <a href="https://www.pitw.ch">
-    <img src="docs/assets/pedrett-logo.jpg" alt="Pedrett IT+Web AG" height="80" />
+    <img src="docs/assets/pedrett-logo.svg" alt="Pedrett IT+Web AG" height="72" />
   </a>
 </p>
 
