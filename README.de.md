@@ -364,6 +364,7 @@ npm start          # node dist/index.js
 | Swagger / API | https://app.swaggerhub.com/apis-docs/MarketplaceSimpleAPI/MarketplaceSimpleAPI/1.0.0 |
 | MCP Spec | https://modelcontextprotocol.io |
 | Anbieter | https://www.pitw.ch |
+| Social Preview | [`docs/assets/social-preview.png`](./docs/assets/social-preview.png) (1280×640 — GitHub → Settings → General → Social preview) |
 
 ---
 
