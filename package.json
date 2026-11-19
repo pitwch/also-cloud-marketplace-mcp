@@ -27,6 +27,7 @@
     "dist",
     "docs/assets",
     "README.md",
+    "README.de.md",
     "LICENSE"
   ],
   "engines": {
