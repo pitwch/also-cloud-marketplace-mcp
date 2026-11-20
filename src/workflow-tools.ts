@@ -3,10 +3,12 @@ import * as z from 'zod/v4';
 import { PARENT_HELP, resolveParentAccountId } from './account-context.js';
 import { alsoPost, mapPool, READ_ONLY, textResult } from './tools-helpers.js';
 import { withAzurePlanAddons } from './azure-addons.js';
+import { FUZZY_HINT } from './company-search.js';
 import {
   DUPLICATE_HINT,
   filterCompaniesByName,
   findNameDuplicates,
+  searchCompaniesByName,
   isAzureRelatedSubscription,
   isReservationSubscription,
   summarizeCompany,
@@ -55,7 +57,7 @@ async function resolveCompany(opts: {
   if (!parent) return { kind: 'result', result: textResult(PARENT_HELP, true) };
 
   const list = await alsoPost('GetCompanies', { parentAccountId: parent.accountId });
-  const matches = filterCompaniesByName(list.body, opts.companyName);
+  const { matches, matchMode } = searchCompaniesByName(list.body, opts.companyName);
   if (matches.length === 0) {
     return {
       kind: 'result',
@@ -64,11 +66,12 @@ async function resolveCompany(opts: {
         parentAccountId: parent.accountId,
         count: 0,
         companies: [],
-        message: 'No company matched. Try a shorter name fragment.',
+        message: 'No company matched (name, abbreviation, initials, customer ID, domain or typo). Try another fragment or find_companies.',
       }),
     };
   }
-  if (matches.length > 1) {
+  // Fuzzy hits (abbreviation / typo) are never picked automatically.
+  if (matches.length > 1 || matchMode === 'fuzzy') {
     return {
       kind: 'result',
       result: textResult(
@@ -76,9 +79,13 @@ async function resolveCompany(opts: {
           {
             query: opts.companyName,
             parentAccountId: parent.accountId,
+            matchMode,
             count: matches.length,
             companies: matches,
-            message: 'Multiple companies matched. Re-call with accountId of the correct company.',
+            message:
+              matchMode === 'fuzzy'
+                ? `${FUZZY_HINT} Re-call with accountId of the correct company.`
+                : 'Multiple companies matched. Re-call with accountId of the correct company.',
           },
           matches,
         ),
@@ -233,12 +240,12 @@ export function registerWorkflowTools(server: McpServer): void {
     {
       title: 'Find companies by name',
       description:
-        'PREFERRED to locate an end-customer company (Kunde/Firma) by name. Calls GetCompanies under the parent and filters by CompanyName (case-, umlaut- and legal-form-insensitive). Flags near-identical names as possibleDuplicates. Not for: reports, invoices, subscriptions (use list_company_subscriptions).',
+        'PREFERRED to locate an end-customer company (Kunde/Firma) by name. Calls GetCompanies under the parent and matches CompanyName case-, umlaut- and legal-form-insensitively: substring, word prefixes ("beisp hand"), initials ("BH"), customer ID and domain; if nothing matches directly, abbreviations ("BP" → Beispiel …) and small typos are returned as matchMode "fuzzy" (confirm with the user). Each hit has matchType. Flags near-identical names as possibleDuplicates. Not for: reports, invoices, subscriptions (use list_company_subscriptions).',
       inputSchema: z.object({
         name: z
           .string()
           .min(1)
-          .describe('Company name fragment, e.g. "Demo" or "Demo AG"'),
+          .describe('Company name, fragment, abbreviation, initials, customer ID or domain, e.g. "Demo", "Demo AG", "DA"'),
         parentAccountId: optionalParent,
       }),
       annotations: READ_ONLY,
@@ -248,14 +255,16 @@ export function registerWorkflowTools(server: McpServer): void {
         const parent = await resolveParentAccountId(parentAccountId);
         if (!parent) return textResult(PARENT_HELP, true);
         const res = await alsoPost('GetCompanies', { parentAccountId: parent.accountId });
-        const matches = filterCompaniesByName(res.body, name);
+        const { matches, matchMode } = searchCompaniesByName(res.body, name);
         return textResult(
           withDuplicates(
             {
               parentAccountId: parent.accountId,
               query: name,
+              matchMode,
               count: matches.length,
               companies: matches,
+              ...(matchMode === 'fuzzy' ? { hint: FUZZY_HINT } : {}),
             },
             matches,
           ),

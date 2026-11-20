@@ -1,4 +1,5 @@
 /** Compact views so models are not flooded with Fields / PriceableItems. */
+import { searchCompanies, type CompanyFields } from './company-search.js';
 
 const INTERESTING_FIELD_NAMES = new Set(
   [
@@ -220,15 +221,19 @@ export function isReservationSubscription(summary: unknown): boolean {
   return RESERVATION_RE.test(`${s.serviceName ?? ''} ${s.serviceDisplayName ?? ''}`);
 }
 
-export function filterCompaniesByName(list: unknown, name: string) {
-  const q = name.trim().toLowerCase();
-  const qNorm = normalizeCompanyName(name);
+/**
+ * Companies matching a name, abbreviation ("BP" → "Beispiel …"), initials,
+ * customer ID, domain or small typo. matchMode "fuzzy" means only
+ * abbreviation/typo suggestions were found (see company-search.ts).
+ */
+export function searchCompaniesByName(list: unknown, name: string) {
   const arr = Array.isArray(list) ? list : [];
-  return arr
+  const companies = arr
     .map(summarizeCompany)
-    .filter((c) => {
-      const raw = String(asRecord(c)?.companyName ?? '');
-      if (raw.toLowerCase().includes(q)) return true;
-      return qNorm.length > 0 && normalizeCompanyName(raw).includes(qNorm);
-    });
+    .filter((c): c is ReturnType<typeof summarizeCompany> & CompanyFields => asRecord(c) !== null);
+  return searchCompanies(companies, name);
+}
+
+export function filterCompaniesByName(list: unknown, name: string) {
+  return searchCompaniesByName(list, name).matches;
 }

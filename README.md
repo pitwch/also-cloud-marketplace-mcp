@@ -298,7 +298,7 @@ Discover all API endpoints: `list_api_endpoints`.
 
 | Tool | Purpose |
 |------|---------|
-| `find_companies` | Find a company by name under a parent |
+| `find_companies` | Find a company under a parent: name or fragment, word prefixes ("beisp hand"), initials ("BH"), customer ID, domain; without a direct hit also abbreviations ("BP" → Beispiel …) and typos as `matchMode: fuzzy` |
 | `list_company_subscriptions` | Active/compact subscriptions for a company |
 | `list_azure_subscriptions` | Azure Plan / RI / Savings Plan (portfolio) |
 | `get_reservation_options` | Exchange/change/renew options (read-only) |

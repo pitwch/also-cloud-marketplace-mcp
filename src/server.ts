@@ -105,7 +105,7 @@ export function createServer(): McpServer {
   const server = new McpServer(
     {
       name: 'also-cloud-marketplace',
-      version: '0.5.0',
+      version: '0.5.1',
     },
     { instructions: SERVER_INSTRUCTIONS },
   );
