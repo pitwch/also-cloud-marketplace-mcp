@@ -280,7 +280,7 @@ export function registerWorkflowTools(server: McpServer): void {
     {
       title: 'List company subscriptions (compact)',
       description:
-        'PREFERRED for "which subscriptions/licences does company X have?". Resolves the company by accountId or name, then GetSubscriptions. Compact summary (no huge Fields arrays). Azure Reserved Instances / Savings Plans (addons of the Azure Plan subscription, field addonOf) are included. activeOnly=true (default) returns active services only; activeOnly=false also lists terminated ones. Not for: cross-customer Azure overview (use list_azure_subscriptions).',
+        'PREFERRED for "which subscriptions/licences does company X have?". Resolves the company by accountId or name, then GetSubscriptions. Compact summary (no huge Fields arrays) incl. quantity, billingType / term (e.g. P1Y), contractEndDate, autoRenew / renewalAction, fullRefundUntil, unit prices (purchase / sales / retail) and monthlySalesTotal / monthlyPurchaseTotal. Azure Reserved Instances / Savings Plans (addons of the Azure Plan subscription, field addonOf) are included. activeOnly=true (default) returns active services only; activeOnly=false also lists terminated ones. Not for: cross-customer Azure overview (use list_azure_subscriptions).',
       inputSchema: z.object({
         accountId: z.number().int().optional().describe('Company Account ID if already known'),
         companyName: z

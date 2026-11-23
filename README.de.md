@@ -299,7 +299,7 @@ Discovery aller API-Endpoints: `list_api_endpoints`.
 | Tool | Zweck |
 |------|--------|
 | `find_companies` | Firma unter Parent suchen: Name oder Teilwort, Wortanfänge («beisp hand»), Initialen («BH»), Kundennummer, Domain; ohne direkten Treffer auch Kürzel («BP» → Beispiel …) und Tippfehler als `matchMode: fuzzy` |
-| `list_company_subscriptions` | Aktive/kompakte Subscriptions einer Firma |
+| `list_company_subscriptions` | Aktive/kompakte Subscriptions einer Firma inkl. Menge, Laufzeit (z. B. P1Y), Abo-Ende, Auto-Renew, Stückpreise (Einkauf / Verkauf / UVP) und Monatssummen |
 | `list_azure_subscriptions` | Azure Plan / RI / Savings Plan (Portfolio) |
 | `get_reservation_options` | Tausch-/Änderungs-/Renew-Optionen (read-only) |
 | `get_my_account` | Eigener Account = Default-`parentAccountId` |

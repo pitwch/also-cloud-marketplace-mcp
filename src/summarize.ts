@@ -119,6 +119,97 @@ export function provisioningHint(error: string): string | undefined {
   return undefined;
 }
 
+function rawField(raw: Record<string, unknown>, name: string): unknown {
+  const fields = Array.isArray(raw.Fields) ? raw.Fields : [];
+  const f = fields.map(asRecord).find((x) => x && String(x.Name).toLowerCase() === name.toLowerCase());
+  return f?.Value;
+}
+
+const round2 = (n: number) => Math.round(n * 100) / 100;
+
+/** "Monthly (with 1-year commitment) - P1Y" → cycle Monthly, term P1Y / "1 year". */
+export function parseBillingType(billingType: string): { billingCycle?: string; term?: string; termText?: string } {
+  const iso = billingType.match(/(?:^|[^A-Za-z0-9])P(\d+)([YM])(?![A-Za-z0-9])/i);
+  const cycle = billingType.match(/^\s*(monthly|annual|annually|yearly|triennial|one[- ]time|prepaid)/i)?.[1];
+  const out: { billingCycle?: string; term?: string; termText?: string } = {};
+  if (cycle) out.billingCycle = cycle[0]!.toUpperCase() + cycle.slice(1).toLowerCase();
+  if (iso) {
+    const n = Number(iso[1]);
+    const unit = iso[2]!.toUpperCase() === 'Y' ? 'year' : 'month';
+    out.term = `P${n}${iso[2]!.toUpperCase()}`;
+    out.termText = `${n} ${unit}${n === 1 ? '' : 's'}`;
+  }
+  return out;
+}
+
+/**
+ * Price, term and end of a subscription from PriceableItems / BillingType /
+ * ContractEndDate. Unit prices per "per unit of <Field>" are multiplied by that
+ * field (e.g. Quantity) to a monthly total; usage-based items only get unit prices.
+ */
+export function commercialSummary(s: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  const quantity = rawField(s, 'Quantity');
+  if (quantity != null && quantity !== '') out.quantity = quantity;
+
+  const billingType = rawField(s, 'BillingType');
+  if (typeof billingType === 'string' && billingType.trim()) {
+    out.billingType = billingType;
+    Object.assign(out, parseBillingType(billingType));
+  }
+
+  if (s.AdvancePeriodEndAction) {
+    out.renewalAction = s.AdvancePeriodEndAction;
+    out.autoRenew = String(s.AdvancePeriodEndAction).toLowerCase() === 'renew';
+  }
+  // ALSO marks open-ended contracts with a far-future end date (e.g. year 2854).
+  const end = String(s.ContractEndDate ?? rawField(s, 'Subscriptionenddate') ?? '');
+  if (/^\d{4}/.test(end) && Number(end.slice(0, 4)) >= 2100) out.openEnded = true;
+  if (s.FullRefundEndDate) out.fullRefundUntil = s.FullRefundEndDate;
+  if (s.PriceProtectionEndDate) out.priceProtectionUntil = s.PriceProtectionEndDate;
+
+  const items = (Array.isArray(s.PriceableItems) ? s.PriceableItems : [])
+    .map(asRecord)
+    .filter((p): p is Record<string, unknown> => !!p)
+    .filter((p) => Number(p.SalesPrice) || Number(p.PurchasePrice) || Number(p.SuggestedRetailPrice));
+  if (items.length) {
+    let monthlySales = 0;
+    let monthlyPurchase = 0;
+    let complete = true;
+    const prices = items.map((p) => {
+      const unitField = String(p.PriceableItemDescription ?? '').match(/per unit of (\w+)/i)?.[1];
+      const units = unitField ? Number(rawField(s, unitField)) : 1;
+      // Consumption meters (e.g. DecimalTotalUsage) have no fixed quantity.
+      const usageBased = !!unitField && (/usage|consumption/i.test(unitField) || !Number.isFinite(units));
+      const recurring = /monthly/i.test(String(p.ChargeType ?? p.PriceableItemType ?? ''));
+      if (recurring && !usageBased) {
+        monthlySales += Number(p.SalesPrice ?? 0) * units;
+        monthlyPurchase += Number(p.PurchasePrice ?? 0) * units;
+      } else if (recurring) {
+        complete = false;
+      }
+      return {
+        item: String(p.PriceableItemDescription ?? '')
+          .replace(/\s+with Billing Type .*$/i, '')
+          .replace(/\s+per unit of \w+$/i, ''),
+        chargeType: p.ChargeType,
+        ...(unitField ? { perUnitOf: unitField, ...(usageBased ? { usageBased: true } : { units }) } : {}),
+        purchasePrice: p.PurchasePrice,
+        salesPrice: p.SalesPrice,
+        retailPrice: p.SuggestedRetailPrice,
+      };
+    });
+    out.currency = items[0]!.Currency;
+    out.prices = prices;
+    if (monthlySales || monthlyPurchase) {
+      out.monthlySalesTotal = round2(monthlySales);
+      out.monthlyPurchaseTotal = round2(monthlyPurchase);
+      if (!complete) out.monthlyTotalNote = 'Usage-based items are not included in the monthly totals.';
+    }
+  }
+  return out;
+}
+
 export function summarizeSubscription(raw: unknown) {
   const s = asRecord(raw);
   if (!s) return raw;
@@ -133,8 +224,9 @@ export function summarizeSubscription(raw: unknown) {
       s.ServiceDisplayName ?? s.DisplayName ?? s.FriendlyName ?? null,
     vendor: s.VendorDisplayName ?? null,
     billingStartDate: s.BillingStartDate ?? null,
-    contractEndDate: s.ContractEndDate ?? null,
+    contractEndDate: s.ContractEndDate ?? rawField(s, 'Subscriptionenddate') ?? null,
     provisioningStatus: s.ProvisioningStatus ?? null,
+    ...commercialSummary(s),
     ...(s.ScheduledTerminationDate ? { terminationDate: s.ScheduledTerminationDate } : {}),
     ...(typeof s.ErrorDetails === 'string' && s.ErrorDetails.trim()
       ? {

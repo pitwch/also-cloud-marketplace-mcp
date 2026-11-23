@@ -4,7 +4,7 @@ const DEFAULT_API_PREFIX = '/SimpleAPI/SimpleAPIService.svc/rest';
 const DEFAULT_LOGIN = 'GetSessionToken';
 /** Internal REST API of the ALSO web portal (undocumented); accepts the same CCPSessionId. */
 const PORTAL_API_PREFIX = '/DataModel/service.svc/rest';
-const USER_AGENT = 'also-cloud-marketplace-mcp/0.5.1';
+const USER_AGENT = 'also-cloud-marketplace-mcp/0.5.2';
 
 export type AlsoConfig = {
   marketplace: string;
@@ -101,8 +101,25 @@ export function formatApiError(status: number, endpoint: string, body: string): 
   return msg;
 }
 
+/**
+ * ALSO answers an expired or invalid CCPSessionId inconsistently: HTTP 401
+ * "Session expired!" (PingPong, portal API) or HTTP 500 "Invalid SessionToken
+ * or your session expired!" (most Simple API calls), with IsSessionExpired
+ * often false. Detect it by status and message text.
+ */
+export function isSessionExpiredResponse(status: number, body: string): boolean {
+  if (status === 401) return true;
+  if (status < 400) return false;
+  return (
+    /<(?:\w+:)?IsSessionExpired>\s*true/i.test(body) ||
+    /invalid\s*session\s*token|session\s+(?:has\s+)?expired|your session expired|session is not valid/i.test(body)
+  );
+}
+
 export class AlsoCloudClient {
   private sessionToken: string | null = null;
+  /** Shared login so parallel calls after an expiry log in only once. */
+  private loginInFlight: Promise<string> | null = null;
   private readonly baseUrl: string;
   private readonly portalBaseUrl: string;
   private readonly timeoutMs: number;
@@ -122,7 +139,13 @@ export class AlsoCloudClient {
     if (this.sessionToken) {
       return this.sessionToken;
     }
+    this.loginInFlight ??= this.login().finally(() => {
+      this.loginInFlight = null;
+    });
+    return this.loginInFlight;
+  }
 
+  private async login(): Promise<string> {
     const res = await this.fetchRaw(DEFAULT_LOGIN, {
       method: 'POST',
       headers: {
@@ -166,11 +189,39 @@ export class AlsoCloudClient {
     headers: Record<string, string>;
     body: string;
   }> {
-    await this.ensureSession();
+    let token = await this.ensureSession();
+    let { res, text } = await this.send(options, token);
 
+    // Expired / invalid session: log in again and retry once. Safe for writes too,
+    // because ALSO rejects the call before executing it.
+    if (isSessionExpiredResponse(res.status, text)) {
+      if (this.sessionToken === token) this.sessionToken = null;
+      token = await this.ensureSession();
+      ({ res, text } = await this.send(options, token));
+      if (isSessionExpiredResponse(res.status, text)) {
+        this.sessionToken = null;
+        throw new Error(
+          `${formatApiError(res.status, options.endpoint, text)} (session was renewed automatically and the call retried once; check the API user / 2FA)`,
+        );
+      }
+    }
+
+    if (res.status < 200 || res.status >= 300) {
+      throw new Error(formatApiError(res.status, options.endpoint, text));
+    }
+
+    const responseHeaders: Record<string, string> = {};
+    res.headers.forEach((value, key) => {
+      responseHeaders[key] = value;
+    });
+
+    return { status: res.status, headers: responseHeaders, body: text };
+  }
+
+  private async send(options: ApiRequestOptions, token: string): Promise<{ res: Response; text: string }> {
     const headers: Record<string, string> = {
       'User-Agent': USER_AGENT,
-      Authenticate: `CCPSessionId ${this.sessionToken}`,
+      Authenticate: `CCPSessionId ${token}`,
     };
 
     let body: string | undefined;
@@ -188,18 +239,7 @@ export class AlsoCloudClient {
       timeoutMs: options.timeoutMs,
       portal: options.portal,
     });
-
-    const text = await res.text();
-    if (res.status < 200 || res.status >= 300) {
-      throw new Error(formatApiError(res.status, options.endpoint, text));
-    }
-
-    const responseHeaders: Record<string, string> = {};
-    res.headers.forEach((value, key) => {
-      responseHeaders[key] = value;
-    });
-
-    return { status: res.status, headers: responseHeaders, body: text };
+    return { res, text: await res.text() };
   }
 
   private async fetchRaw(
