@@ -97,10 +97,31 @@ const fieldValueMap = z
 
 const updateField = z
   .object({
-    name: z.string().describe('Field name, e.g. "QuantityVcores"'),
-    value: z.string().describe('New value as string'),
+    name: z.string().optional().describe('Field name, e.g. "Quantity" ("Name" is accepted too)'),
+    value: z
+      .union([z.string(), z.number(), z.boolean()])
+      .optional()
+      .describe('New value ("Value" is accepted too). Numeric fields are sent as numbers per the field definition.'),
   })
   .loose();
+
+type FieldDef = Record<string, unknown>;
+
+/** Value typed like the field definition: ALSO fails on numeric fields sent as text. */
+export function coerceFieldValue(value: unknown, def: FieldDef | undefined, name: string): unknown {
+  const type = String(def?.Type ?? '').toLowerCase();
+  const template = String(def?.DisplayTemplate ?? '').toLowerCase();
+  const numeric = def
+    ? /^(u?int|long|short|decimal|double|float|single|number|numeric)/.test(type) || template === 'numeric'
+    : /quantity/i.test(name);
+  if (numeric && typeof value === 'string' && value.trim() !== '' && Number.isFinite(Number(value))) {
+    return Number(value);
+  }
+  if (/^bool/.test(type) && typeof value === 'string' && /^(true|false)$/i.test(value.trim())) {
+    return value.trim().toLowerCase() === 'true';
+  }
+  return value;
+}
 
 const creditCheckOrder = z
   .object({
@@ -354,27 +375,131 @@ export function registerWriteTools(server: McpServer): void {
     precheckThenPost('CreateSubscription'),
   );
 
-  registerAlsoPostTool(server, 'update_subscription', {
-    title: 'Update subscription',
-    description: 'WRITE: UpdateSubscription — changes field values (e.g. Quantity) of an existing subscription. Pass AccountId + changed Fields. For RI/Savings Plan exchange use get_reservation_options first.',
-    endpoint: 'UpdateSubscription',
-    annotations: WRITE_UPDATE,
-    inputSchema: z.object({
-      subscription: z
-        .object({
-          AccountId: z.number().int().describe('Subscription Account ID'),
-          ServiceName: z.string().min(1).describe('Technical product name of the subscription (from get_subscription)'),
-          Fields: z
-            .array(updateField)
-            .describe('Only the fields to change as [{name, value}], e.g. [{"name":"QuantityVcores","value":"2"}]'),
-          AdvancePeriodEndAction: z.enum(['Renew', 'Terminate']).optional(),
-          ContractId: z.string().optional(),
-          PurchaseOrderNumber: z.string().optional(),
-        })
-        .loose()
-        .describe('UpdateSubscription payload (AccountId, ServiceName, Fields required).'),
-    }),
-  });
+  server.registerTool(
+    'update_subscription',
+    {
+      title: 'Update subscription',
+      description:
+        'WRITE: UpdateSubscription — changes field values (e.g. Quantity / seats, Lizenzen erhöhen) of an existing subscription. Pass AccountId + only the changed Fields. The MCP types values like the field definition (numbers as numbers), sends them as {Name, Value} and first validates the change with ValidateFields (update mode); if ALSO rejects it there, UpdateSubscription is NOT called. Only after explicit user confirmation (seat increases are charged). For RI/Savings Plan exchange use get_reservation_options first.',
+      annotations: WRITE_UPDATE,
+      inputSchema: z.object({
+        subscription: z
+          .object({
+            AccountId: z.number().int().describe('Subscription Account ID'),
+            ServiceName: z
+              .string()
+              .min(1)
+              .optional()
+              .describe('Technical product name (from get_subscription); read from the subscription when omitted'),
+            Fields: z
+              .array(updateField)
+              .min(1)
+              .describe('Only the fields to change, e.g. [{"name":"Quantity","value":3}]'),
+            AdvancePeriodEndAction: z.enum(['Renew', 'Terminate']).optional(),
+            ContractId: z.string().optional(),
+            PurchaseOrderNumber: z.string().optional(),
+          })
+          .loose()
+          .describe('UpdateSubscription payload (AccountId and Fields required).'),
+      }),
+    },
+    async ({ subscription }) => {
+      const notes: string[] = [];
+      let sentFields: Array<{ Name: string; Value: unknown }> = [];
+      try {
+        const { Fields: rawFields, ...rest } = subscription as Record<string, unknown> & { Fields: unknown[] };
+        const changes = rawFields.map((f) => {
+          const o = f as Record<string, unknown>;
+          return { name: String(o.name ?? o.Name ?? '').trim(), value: o.value !== undefined ? o.value : o.Value };
+        });
+        const missing = changes.filter((c) => !c.name || c.value === undefined);
+        if (missing.length) {
+          return textResult({ error: 'UpdateSubscription was NOT called: every field needs a name and a value.', fields: rawFields }, true);
+        }
+
+        // Subscription context: service, parent and tenant dependency for the field definitions.
+        const sub = (await alsoPost('GetSubscription', { accountId: subscription.AccountId })).body as Record<string, unknown>;
+        const serviceName = String(subscription.ServiceName ?? sub.ServiceName ?? '');
+        const parentAccountId = sub.ParentAccountId;
+        let defs: FieldDef[] = [];
+        try {
+          const raw = (
+            await alsoPost('GetFieldsForService', {
+              productName: serviceName,
+              parentAccountId,
+              ...(sub.DependencyAccountId ? { secondaryParentId: sub.DependencyAccountId } : {}),
+            })
+          ).body;
+          defs = (Array.isArray(raw) ? raw : ((raw as Record<string, unknown>)?.Fields as FieldDef[]) ?? []) as FieldDef[];
+        } catch (e) {
+          notes.push(`Field definitions not loaded (${e instanceof Error ? e.message : String(e)}); numeric-looking Quantity values sent as numbers.`);
+        }
+        const byName = new Map(defs.map((d) => [String(d.Name).toLowerCase(), d]));
+        sentFields = changes.map((c) => {
+          const def = byName.get(c.name.toLowerCase());
+          if (defs.length && !def) notes.push(`Field "${c.name}" is not in the field definitions of ${serviceName}.`);
+          const name = def ? String(def.Name) : c.name;
+          return { Name: name, Value: coerceFieldValue(c.value, def, name) };
+        });
+
+        // Same validation ALSO runs inside UpdateSubscription, but with readable results.
+        try {
+          const v = (
+            await alsoPost('ValidateFields', {
+              subscriptionAccount: {
+                AccountId: subscription.AccountId,
+                ParentAccountId: parentAccountId,
+                ServiceName: serviceName,
+                Fields: Object.fromEntries(sentFields.map((f) => [f.Name, f.Value])),
+                FieldsToValidate: sentFields.map((f) => f.Name),
+              },
+            })
+          ).body;
+          const failed = (Array.isArray(v) ? v : []).filter(
+            (r) => String((r as Record<string, unknown>)?.Result ?? '').toUpperCase() !== 'OK',
+          );
+          if (failed.length) {
+            // ErrorDetails is often a JSON string like {"type":"markdown","value":"…"}.
+            const readable = failed.map((r) => {
+              const o = r as Record<string, unknown>;
+              let details = o.ErrorDetails;
+              if (typeof details === 'string') {
+                try {
+                  const j = JSON.parse(details) as Record<string, unknown>;
+                  if (typeof j?.value === 'string') details = j.value;
+                } catch {
+                  // plain text
+                }
+              }
+              return { field: o.FieldName, result: o.Result, reason: details };
+            });
+            return textResult(
+              { error: 'UpdateSubscription was NOT called: ALSO rejected the change in validation.', failed: readable, sentFields },
+              true,
+            );
+          }
+        } catch (e) {
+          notes.push(`Update validation unavailable (${e instanceof Error ? e.message : String(e)}); UpdateSubscription called anyway.`);
+        }
+
+        const res = await alsoPost('UpdateSubscription', {
+          subscription: { ...rest, AccountId: subscription.AccountId, ServiceName: serviceName, Fields: sentFields },
+        });
+        return textResult({
+          ...res,
+          sentFields,
+          ...(notes.length ? { notes } : {}),
+          nextStep: 'Check the result with get_subscription (LastProvisioning, field values) in a few minutes.',
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return textResult(
+          `${msg}${sentFields.length ? ` Sent fields: ${JSON.stringify(sentFields)}.` : ''}${notes.length ? ` Notes: ${notes.join(' ')}` : ''}`,
+          true,
+        );
+      }
+    },
+  );
 
   registerAlsoPostTool(server, 'get_account_custom_actions', {
     title: 'Get account custom actions',
