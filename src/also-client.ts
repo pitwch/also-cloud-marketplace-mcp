@@ -1,10 +1,11 @@
 import { resolveMarketplace } from './marketplaces.js';
+import { VERSION } from './version.js';
 
 const DEFAULT_API_PREFIX = '/SimpleAPI/SimpleAPIService.svc/rest';
 const DEFAULT_LOGIN = 'GetSessionToken';
 /** Internal REST API of the ALSO web portal (undocumented); accepts the same CCPSessionId. */
 const PORTAL_API_PREFIX = '/DataModel/service.svc/rest';
-const USER_AGENT = 'also-cloud-marketplace-mcp/0.5.2';
+const USER_AGENT = `also-cloud-marketplace-mcp/${VERSION}`;
 
 export type AlsoConfig = {
   marketplace: string;

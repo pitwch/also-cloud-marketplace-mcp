@@ -29,6 +29,7 @@ import { registerPortalOrderTools } from './portal-order.js';
 import { registerWorkflowTools } from './workflow-tools.js';
 import { registerWriteTools } from './write-tools.js';
 import { withAzurePlanAddons } from './azure-addons.js';
+import { VERSION } from './version.js';
 
 const accountId = z.number().int().describe('ALSO Cloud Account ID');
 const parentAccountId = z
@@ -105,7 +106,7 @@ export function createServer(): McpServer {
   const server = new McpServer(
     {
       name: 'also-cloud-marketplace',
-      version: '0.5.2',
+      version: VERSION,
     },
     { instructions: SERVER_INSTRUCTIONS },
   );

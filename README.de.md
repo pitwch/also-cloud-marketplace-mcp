@@ -353,6 +353,12 @@ npm start          # node dist/index.js
 
 **Wichtig:** Auf stdout nur MCP-JSON-RPC schreiben — Logs ausschliesslich mit `console.error`.
 
+**Release:** `version` in `package.json` erhöhen (die Version steht nur dort), committen und einen passenden Tag pushen — GitHub Actions baut und veröffentlicht den Release mit automatischen Notes:
+
+```bash
+git tag v0.5.3 && git push origin v0.5.3
+```
+
 ---
 
 ## Links
