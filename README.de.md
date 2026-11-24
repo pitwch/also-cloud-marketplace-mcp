@@ -43,7 +43,7 @@ Dieser MCP-Server verbindet KI-Assistenten (Cursor, Claude, Gemini CLI, Codex, �
 - Workflow-Tools für typische Reseller-Fragen (`find_companies`, `list_company_subscriptions`, …)
 - Kompakte Antworten standardmässig — Rohdaten nur mit `fullDetail=true`
 - Azure RI / Savings Plans inkl. Katalog-Enums und Bestell-Probelauf
-- Lesbare ALSO-Fehler inkl. Support-Token bei 500ern
+- Lesbare ALSO-Fehler mit Support-Angaben (ALSO-Token, sonst Serverzeit, Referenzen und MCP-Request-ID) und einem Hinweis zum weiteren Vorgehen
 - Escape Hatches: `api_read` / `api_request` für selten genutzte Endpoints
 
 ---

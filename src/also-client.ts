@@ -67,11 +67,79 @@ function decodeXml(s: string): string {
     .replace(/&amp;/g, '&');
 }
 
+/** Context of one failed call, for the support details in the error message. */
+export type ApiErrorContext = {
+  /** ID the MCP generated and sent as X-Request-ID (ALSO does not return one of its own). */
+  requestId?: string;
+  /** ALSO's Date response header (server time of the failure). */
+  serverDate?: string | null;
+  /** Request body; only AccountId, ServiceName and field names are taken from it. */
+  requestBody?: unknown;
+};
+
+function swissTime(d: Date): string {
+  try {
+    return d.toLocaleString('de-CH', { timeZone: 'Europe/Zurich', hour12: false });
+  } catch {
+    return d.toISOString();
+  }
+}
+
+/** Non-sensitive identifiers of the request (no field values, no passwords). */
+function requestRefs(body: unknown): string[] {
+  if (!body || typeof body !== 'object') return [];
+  const refs: string[] = [];
+  const seen = new Set<string>();
+  const visit = (o: Record<string, unknown>, depth: number) => {
+    for (const [k, v] of Object.entries(o)) {
+      const key = k.toLowerCase();
+      if ((key === 'accountid' || key === 'parentaccountid') && (typeof v === 'number' || typeof v === 'string')) {
+        const s = `${k}: ${v}`;
+        if (!seen.has(s)) refs.push(s), seen.add(s);
+      } else if (key === 'servicename' && typeof v === 'string') {
+        const s = `ServiceName: ${v}`;
+        if (!seen.has(s)) refs.push(s), seen.add(s);
+      } else if (key === 'fields' && v) {
+        const names = Array.isArray(v)
+          ? v.map((f) => (f && typeof f === 'object' ? (f as Record<string, unknown>).name ?? (f as Record<string, unknown>).Name : undefined)).filter((n) => typeof n === 'string')
+          : typeof v === 'object' ? Object.keys(v) : [];
+        if (names.length) refs.push(`fields: ${names.join(', ')}`);
+      } else if (v && typeof v === 'object' && !Array.isArray(v) && depth < 2) {
+        visit(v as Record<string, unknown>, depth + 1);
+      }
+    }
+  };
+  visit(body as Record<string, unknown>, 0);
+  return refs;
+}
+
+/** Get…, Search… and List… calls only read; everything else may change data. */
+function isReadEndpoint(endpoint: string): boolean {
+  return /^(Get|Search|List|PingPong)/i.test(endpoint.split('/').pop() ?? endpoint);
+}
+
+/** What the user can do next, for ALSO-side failures the MCP cannot fix itself. */
+function errorHint(status: number, endpoint: string, reason: string): string | undefined {
+  if (status < 500) return undefined;
+  const write = !isReadEndpoint(endpoint);
+  if (/couldn'?t validate fields/i.test(reason) && /unhandled exception/i.test(reason)) {
+    return 'ALSO failed internally while validating the fields, so the request was not executed (nothing changed or ordered). This is an ALSO-side error, often transient: retry once in a few minutes; if it recurs, make the change in the ALSO portal or send the support details that follow to ALSO support.';
+  }
+  if (/unhandled exception|please contact support|internal server error/i.test(reason)) {
+    return write
+      ? 'ALSO-side error. Before retrying, check with get_subscription / get_company whether the change was applied anyway. If it recurs, use the ALSO portal or send the support details that follow to ALSO support.'
+      : 'ALSO-side error, often transient: retry once in a few minutes; if it recurs, send the support details that follow to ALSO support.';
+  }
+  return undefined;
+}
+
 /**
  * Turn ALSO/WCF error bodies (XML <Fault> or JSON) into one readable line:
  * "API error (HTTP 500) on ValidateFields: <reason> [ALSO support token: …]".
+ * Without an ALSO token it adds support details (server time, request refs,
+ * the MCP request ID) so ALSO support can find the call in their logs.
  */
-export function formatApiError(status: number, endpoint: string, body: string): string {
+export function formatApiError(status: number, endpoint: string, body: string, ctx: ApiErrorContext = {}): string {
   let reason = '';
   const xmlText = body.match(/<(?:\w+:)?Text[^>]*>([\s\S]*?)<\/(?:\w+:)?Text>/);
   if (xmlText) reason = decodeXml(xmlText[1]!);
@@ -95,10 +163,22 @@ export function formatApiError(status: number, endpoint: string, body: string): 
   msg += generic
     ? 'ALSO returned a generic server error without details (often caused by missing/invalid input fields).'
     : reason;
-  // Always give support something to reference: ALSO's token, or else the exact time.
-  msg += token
-    ? ` [ALSO support token: ${token}]`
-    : ` [ALSO sent no support token; time ${new Date().toISOString()}]`;
+  const hint = errorHint(status, endpoint, reason);
+  if (hint) msg += ` Hint: ${hint}`;
+
+  // Always give support something to reference: ALSO's token, or else the call details.
+  const parsedDate = ctx.serverDate ? new Date(ctx.serverDate) : null;
+  const when = parsedDate && !Number.isNaN(parsedDate.getTime()) ? parsedDate : new Date();
+  const faultCode = body.match(/<(?:\w+:)?Code>\s*<(?:\w+:)?Value>([^<]+)</)?.[1]?.trim();
+  const details = [
+    token ? `ALSO support token: ${token}` : 'ALSO returned no support token',
+    `endpoint: ${endpoint}`,
+    `HTTP ${status}${faultCode ? ` (fault code ${faultCode})` : ''}`,
+    `${ctx.serverDate ? 'ALSO server time' : 'time'}: ${when.toISOString().replace('T', ' ').replace(/\.\d+Z$/, ' UTC')} (${swissTime(when)} Swiss time)`,
+    ...requestRefs(ctx.requestBody),
+    ...(ctx.requestId ? [`MCP request ID: ${ctx.requestId} (sent to ALSO as X-Request-ID)`] : []),
+  ];
+  msg += ` [Support details — ${details.join(' | ')}]`;
   return msg;
 }
 
@@ -190,25 +270,37 @@ export class AlsoCloudClient {
     headers: Record<string, string>;
     body: string;
   }> {
+    // ALSO returns no request ID of its own, so tag every call with one for support / logs.
+    const requestId = crypto.randomUUID();
+    const errorCtx = (r: Response): ApiErrorContext => ({
+      requestId,
+      serverDate: r.headers.get('date'),
+      requestBody: options.body,
+    });
+    const logFailure = (r: Response) =>
+      console.error(`[also] ${options.endpoint} HTTP ${r.status} request ${requestId} at ${new Date().toISOString()}`);
+
     let token = await this.ensureSession();
-    let { res, text } = await this.send(options, token);
+    let { res, text } = await this.send(options, token, requestId);
 
     // Expired / invalid session: log in again and retry once. Safe for writes too,
     // because ALSO rejects the call before executing it.
     if (isSessionExpiredResponse(res.status, text)) {
       if (this.sessionToken === token) this.sessionToken = null;
       token = await this.ensureSession();
-      ({ res, text } = await this.send(options, token));
+      ({ res, text } = await this.send(options, token, requestId));
       if (isSessionExpiredResponse(res.status, text)) {
         this.sessionToken = null;
+        logFailure(res);
         throw new Error(
-          `${formatApiError(res.status, options.endpoint, text)} (session was renewed automatically and the call retried once; check the API user / 2FA)`,
+          `${formatApiError(res.status, options.endpoint, text, errorCtx(res))} (session was renewed automatically and the call retried once; check the API user / 2FA)`,
         );
       }
     }
 
     if (res.status < 200 || res.status >= 300) {
-      throw new Error(formatApiError(res.status, options.endpoint, text));
+      logFailure(res);
+      throw new Error(formatApiError(res.status, options.endpoint, text, errorCtx(res)));
     }
 
     const responseHeaders: Record<string, string> = {};
@@ -219,10 +311,15 @@ export class AlsoCloudClient {
     return { status: res.status, headers: responseHeaders, body: text };
   }
 
-  private async send(options: ApiRequestOptions, token: string): Promise<{ res: Response; text: string }> {
+  private async send(
+    options: ApiRequestOptions,
+    token: string,
+    requestId: string,
+  ): Promise<{ res: Response; text: string }> {
     const headers: Record<string, string> = {
       'User-Agent': USER_AGENT,
       Authenticate: `CCPSessionId ${token}`,
+      'X-Request-ID': requestId,
     };
 
     let body: string | undefined;
@@ -274,7 +371,12 @@ export class AlsoCloudClient {
       });
     } catch (err) {
       if (controller.signal.aborted) {
-        throw new Error(`Timeout after ${timeoutMs} ms on ${endpoint} (ALSO did not answer in time).`);
+        const write = init.method !== 'GET' && !isReadEndpoint(endpoint);
+        throw new Error(
+          `Timeout after ${timeoutMs} ms on ${endpoint} (ALSO did not answer in time; time ${new Date().toISOString()}` +
+            `${init.headers['X-Request-ID'] ? `, MCP request ID ${init.headers['X-Request-ID']}` : ''}).` +
+            (write ? ' ALSO may still have processed the request: check the current state before retrying.' : ''),
+        );
       }
       throw err;
     } finally {

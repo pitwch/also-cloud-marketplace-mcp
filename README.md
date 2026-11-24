@@ -43,7 +43,7 @@ This MCP server connects AI assistants (Cursor, Claude, Gemini CLI, Codex, …) 
 - Workflow tools for common reseller questions (`find_companies`, `list_company_subscriptions`, …)
 - Compact responses by default — raw data only with `fullDetail=true`
 - Azure RI / Savings Plans including catalog enums and order dry-run
-- Readable ALSO errors including support tokens on 500s
+- Readable ALSO errors with support details (ALSO token, or server time, request refs and an MCP request ID) and a hint what to do next
 - Escape hatches: `api_read` / `api_request` for rarely used endpoints
 
 ---
