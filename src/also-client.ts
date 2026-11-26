@@ -121,9 +121,12 @@ function isReadEndpoint(endpoint: string): boolean {
 /** What the user can do next, for ALSO-side failures the MCP cannot fix itself. */
 function errorHint(status: number, endpoint: string, reason: string): string | undefined {
   if (status < 500) return undefined;
+  if (/requires purchase order commitment/i.test(reason)) {
+    return 'Nothing was ordered. The product has a commitment term: after the user confirmed product, term and price, repeat the call with PurchaseOrderCommitment: true (in subscriptionAccount; purchaseOrderCommitment for upgrades).';
+  }
   const write = !isReadEndpoint(endpoint);
   if (/couldn'?t validate fields/i.test(reason) && /unhandled exception/i.test(reason)) {
-    return 'ALSO failed internally while validating the fields, so the request was not executed (nothing changed or ordered). This is an ALSO-side error, often transient: retry once in a few minutes; if it recurs, make the change in the ALSO portal or send the support details that follow to ALSO support.';
+    return 'ALSO failed internally while validating the fields, so the request was not executed (nothing changed or ordered). Known cause: UpdateSubscription without ParentAccountId (update_subscription adds it automatically; with api_request send ParentAccountId from get_subscription). Otherwise retry once in a few minutes; if it recurs, make the change in the ALSO portal or send the support details that follow to ALSO support.';
   }
   if (/unhandled exception|please contact support|internal server error/i.test(reason)) {
     return write

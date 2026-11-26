@@ -300,7 +300,12 @@ export function registerWriteTools(server: McpServer): void {
         ),
       ContractId: z.string().optional(),
       PurchaseOrderNumber: z.string().optional(),
-      PurchaseOrderCommitment: z.boolean().optional(),
+      PurchaseOrderCommitment: z
+        .boolean()
+        .optional()
+        .describe(
+          'CreateSubscription: true confirms the commitment term (BillingType, e.g. P1M / P1Y). Required by ALSO for Microsoft NCE products ("requires purchase order commitment"); set it only after the user confirmed product, term and price.',
+        ),
       QuoteId: z.string().optional(),
       ScheduledDate: z.string().optional().describe('YYYY-MM-DD'),
       FieldsToValidate: z
@@ -368,7 +373,7 @@ export function registerWriteTools(server: McpServer): void {
     {
       title: 'Create subscription',
       description:
-        'WRITE: CreateSubscription — orders/provisions a new service (cost!). Only after explicit user confirmation. Runs the same local field precheck as validate_subscription_fields and refuses to call ALSO if mandatory fields are missing or invalid. Not for: Azure Reserved Instances / Savings Plans (remote pricing fields, not supported by the Simple API): use order_azure_reservation.',
+        'WRITE: CreateSubscription — orders/provisions a new service (cost!). Only after explicit user confirmation. Microsoft NCE products need PurchaseOrderCommitment=true (confirms the commitment term). Runs the same local field precheck as validate_subscription_fields and refuses to call ALSO if mandatory fields are missing or invalid. Not for: Azure Reserved Instances / Savings Plans (remote pricing fields, not supported by the Simple API): use order_azure_reservation.',
       annotations: WRITE_IRREVERSIBLE,
       inputSchema: z.object({ subscriptionAccount }),
     },
@@ -380,7 +385,7 @@ export function registerWriteTools(server: McpServer): void {
     {
       title: 'Update subscription',
       description:
-        'WRITE: UpdateSubscription — changes field values (e.g. Quantity / seats, Lizenzen erhöhen) of an existing subscription. Pass AccountId + only the changed Fields. The MCP types values like the field definition (numbers as numbers), sends them as {Name, Value} and first validates the change with ValidateFields (update mode); if ALSO rejects it there, UpdateSubscription is NOT called. Only after explicit user confirmation (seat increases are charged). For RI/Savings Plan exchange use get_reservation_options first.',
+        'WRITE: UpdateSubscription — changes field values (e.g. Quantity / seats, Lizenzen erhöhen) of an existing subscription. Pass AccountId + only the changed Fields. The MCP adds ServiceName and ParentAccountId from the subscription (without ParentAccountId ALSO fails with "Couldn\'t validate fields … Unhandled exception"), types values like the field definition and first validates the change with ValidateFields (update mode); if ALSO rejects it there, UpdateSubscription is NOT called. Microsoft NCE changes need PurchaseOrderCommitment=true. Only after explicit user confirmation of product, new quantity and price (seat increases are charged). For RI/Savings Plan exchange use get_reservation_options first.',
       annotations: WRITE_UPDATE,
       inputSchema: z.object({
         subscription: z
@@ -395,6 +400,12 @@ export function registerWriteTools(server: McpServer): void {
               .array(updateField)
               .min(1)
               .describe('Only the fields to change, e.g. [{"name":"Quantity","value":3}]'),
+            PurchaseOrderCommitment: z
+              .boolean()
+              .optional()
+              .describe(
+                'true confirms the commitment term of the change. Required by ALSO for Microsoft NCE seat changes ("requires purchase order commitment"); set it only after the user confirmed the change and price.',
+              ),
             AdvancePeriodEndAction: z.enum(['Renew', 'Terminate']).optional(),
             ContractId: z.string().optional(),
             PurchaseOrderNumber: z.string().optional(),
@@ -483,7 +494,14 @@ export function registerWriteTools(server: McpServer): void {
         }
 
         const res = await alsoPost('UpdateSubscription', {
-          subscription: { ...rest, AccountId: subscription.AccountId, ServiceName: serviceName, Fields: sentFields },
+          // ParentAccountId is required in practice: without it ALSO's field validation crashes.
+          subscription: {
+            ...rest,
+            AccountId: subscription.AccountId,
+            ServiceName: serviceName,
+            ...(parentAccountId != null && rest.ParentAccountId == null ? { ParentAccountId: parentAccountId } : {}),
+            Fields: sentFields,
+          },
         });
         return textResult({
           ...res,
