@@ -1,7 +1,7 @@
 {
   "name": "@pitwch/also-cloud-marketplace-mcp",
   "mcpName": "io.github.pitwch/also-cloud-marketplace-mcp",
-  "version": "0.5.6",
+  "version": "0.5.7",
   "description": "MCP server for ALSO Cloud Marketplace API",
   "publishConfig": {
     "access": "public"
@@ -25,7 +25,7 @@
     "modelcontextprotocol"
   ],
   "bin": {
-    "also-cloud-marketplace-mcp": "./dist/index.js"
+    "also-cloud-marketplace-mcp": "dist/index.js"
   },
   "files": [
     "dist",

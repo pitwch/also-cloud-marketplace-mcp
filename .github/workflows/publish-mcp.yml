@@ -65,6 +65,21 @@ jobs:
           tar xzf "$archive" mcp-publisher
           rm -f "$archive" "$archive.sigstore.json"
 
+      - name: Wait until npm serves the new version
+        run: |
+          PKG="$(node -p "require('./package.json').name")"
+          VERSION="$(node -p "require('./package.json').version")"
+          for i in $(seq 1 30); do
+            if npm view "${PKG}@${VERSION}" version >/dev/null 2>&1; then
+              echo "${PKG}@${VERSION} is available on npm"
+              exit 0
+            fi
+            echo "Waiting for ${PKG}@${VERSION} (attempt $i)..."
+            sleep 20
+          done
+          echo "::error::${PKG}@${VERSION} not visible on npm after 10 minutes"
+          exit 1
+
       - name: Authenticate to MCP Registry
         run: ./mcp-publisher login github-oidc
 
