@@ -1,0 +1,47 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.pitwch/also-cloud-marketplace-mcp",
+  "description": "ALSO Cloud Marketplace API: companies, subscriptions, Azure plans, invoices (MCP stdio).",
+  "repository": {
+    "url": "https://github.com/pitwch/also-cloud-marketplace-mcp",
+    "source": "github"
+  },
+  "version": "0.5.6",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "@pitwch/also-cloud-marketplace-mcp",
+      "version": "0.5.6",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "ALSO_CLOUDUSER",
+          "description": "ALSO Cloud login (e-mail)",
+          "isRequired": true,
+          "format": "string"
+        },
+        {
+          "name": "ALSO_CLOUDPW",
+          "description": "ALSO Cloud password",
+          "isRequired": true,
+          "format": "string",
+          "isSecret": true
+        },
+        {
+          "name": "ALSO_CLOUD_MARKETPLACE",
+          "description": "Marketplace URL or country key, e.g. https://marketplace.also.ch",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
+          "name": "ALSO_CLOUD_PARENT_ACCOUNT_ID",
+          "description": "Optional default parent account ID",
+          "isRequired": false,
+          "format": "number"
+        }
+      ]
+    }
+  ]
+}
